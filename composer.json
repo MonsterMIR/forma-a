@@ -1,0 +1,25 @@
+{
+    "name": "forma-a/forma-a",
+    "description": "Forma A - Act Management System",
+    "type": "project",
+    "require": {
+        "php": ">=8.2",
+        "minishlink/web-push": "^11.0",
+        "guzzlehttp/guzzle": "^8.0",
+        "dompdf/dompdf": "^3.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/"
+        },
+        "files": [
+            "app/Helpers/functions.php"
+        ]
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    }
+}

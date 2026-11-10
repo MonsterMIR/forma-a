@@ -1,0 +1,19 @@
+# Файл: /home/MrTank/web/forma.tvtairport.uz/public_html/public/.htaccess
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Если файл реально существует - отдаём напрямую
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    # Всё остальное → index.php
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Защита от прямого доступа к PHP файлам кроме index.php
+<FilesMatch "^(?!index\.php$).*\.php$">
+    Order Deny,Allow
+    Deny from all
+</FilesMatch>
