@@ -68,13 +68,26 @@ class PermissionParser
             $flights = array_merge($flights, $this->parsePlanningNoticeFormat($text));
         }
 
-        // Fallback: если ни один маркер не найден — пробуем оба парсера
-        // (на случай если формат документа отличается от ожидаемого)
+        // Fallback: если ни один маркер не найден — пробуем парсеры по
+        // очереди (на случай если формат документа отличается от ожидаемого)
         if (empty($flights)) {
             $flights = array_merge($flights, $this->parseCAAFormat($text));
         }
         if (empty($flights)) {
             $flights = array_merge($flights, $this->parseRevisionFormat($text));
+        }
+        // ДОБАВЛЕНО (10.11.2026, раунд 165, живой случай — ЦОК вставил в
+        // /flights/import ТОЛЬКО строки графика рейсов без шапки документа
+        // ("SUBJ:...PLANIROWANIJA..."/"ZAKAZCHIK" — маркер выше не найден,
+        // см. claude/analysis-2026-11-10-round165-...md): формат ноги рейса
+        // parsePlanningNoticeFormat() (ДАТА ПОЗЫВНОЙ ОТКУДА ЧЧММ - КУДА ЧЧММ
+        // ПАКС/FERRY) самодостаточен и без шапки документа — просто не
+        // найдёт оператора/тип ВС/регистрацию (останутся пустыми, ЦОК
+        // дозаполнит вручную на карточке рейса, как и для любого другого
+        // рейса без этих данных) — это безопаснее и полезнее, чем вообще не
+        // создать рейсы молча.
+        if (empty($flights)) {
+            $flights = array_merge($flights, $this->parsePlanningNoticeFormat($text));
         }
 
         return array_values($flights);
@@ -359,12 +372,22 @@ class PermissionParser
         $reg          = strtoupper(trim($m[2] ?? ''));
 
         // Ноги рейса: ДАТА  ПОЗЫВНОЙ  ОТКУДА ЧЧММ - КУДА ЧЧММ  ПАКС/FERRY
-        // Пример: "24OCT2026  MFX801  TAS 0230 - TVT 0300     FERRY"
-        $legPattern = '/(\d{2}[A-Z]{3}\d{4})\s+(\S+)\s+([A-Z]{3,4})\s*(\d{4})\s*-\s*([A-Z]{3,4})\s*(\d{4})\s+(\d*PAX|FERRY)/i';
+        // Пример: "24OCT2026  MFX801  TAS 0230 - TVT 0300     FERRY" (4-значный
+        // год) — но ДОБАВЛЕНО (10.11.2026, раунд 165, живой случай MFX802,
+        // тот же заказчик/формат, что и раунд 124, просто год в строках
+        // графика дан 2 цифрами — "11NOV26  MFX802  LBG 1000 - TVT 1710
+        // 10PAX"): дата теперь принимает ОБА варианта (4 или 2 цифры года;
+        // 4-значный проверяется первым, чтобы не отломать уже распознаваемый
+        // раундом 124 формат — альтернатива в regex не "самая длинная", а
+        // "первая подходящая слева направо").
+        $legPattern = '/(\d{2}[A-Z]{3}(?:\d{4}|\d{2}))\s+(\S+)\s+([A-Z]{3,4})\s*(\d{4})\s*-\s*([A-Z]{3,4})\s*(\d{4})\s+(\d*PAX|FERRY)/i';
         preg_match_all($legPattern, $text, $legs, PREG_SET_ORDER);
 
         foreach ($legs as $leg) {
-            $date     = $this->parseLongDate($leg[1]);
+            // Год в захваченной дате — 4 или 2 цифры (см. комментарий выше у
+            // $legPattern) — выбираем парсер по фактической длине совпадения,
+            // а не гадаем заранее.
+            $date     = (strlen($leg[1]) >= 9) ? $this->parseLongDate($leg[1]) : $this->parseShortDate($leg[1]);
             $cs       = strtoupper($leg[2]);
             $fromIcao = strtoupper($leg[3]);
             $depTime  = substr($leg[4], 0, 2) . ':' . substr($leg[4], 2, 2);

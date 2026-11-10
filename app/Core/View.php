@@ -68,4 +68,35 @@ class View
     {
         $_SESSION['flash'][$type] = $message;
     }
+
+    /**
+     * ДОБАВЛЕНО (10.11.2026, раунд 165, по жалобе пользователя — живой случай
+     * рейса #311, см. claude/analysis-2026-11-10-round165-flight-manual-add-
+     * stand-registration-deadlock.md): "Не стыковка в логике работы ручного
+     * добавления рейсов" — при ошибке сохранения формы рейса (FlightController
+     * store()/update()) контроллер всегда делает redirect() на ту же форму;
+     * это новый GET-запрос, и $_POST с данными, которые человек только что
+     * ввёл (включая борт), теряется полностью. Форма создания рейса
+     * (resources/views/flights/create.php) уже давно написана в расчёте на
+     * то, что значения можно будет перечитать из $_POST после неудачной
+     * попытки (почти каждое поле там — `$_POST['поле'] ?? ''`), но это
+     * никогда не работало по описанной выше причине.
+     *
+     * Эта пара методов — session-backed аналог $_POST, переживающий один
+     * redirect, по тому же принципу "записать — один раз прочитать", что и
+     * flash-сообщения выше. setOldInput() вызывается в store()/update() перед
+     * redirect(); getOldInput() — в create()/edit() при повторном показе
+     * формы. См. использование в FlightController.
+     */
+    public static function setOldInput(array $data): void
+    {
+        $_SESSION['old_input'] = $data;
+    }
+
+    public static function getOldInput(): array
+    {
+        $old = $_SESSION['old_input'] ?? [];
+        unset($_SESSION['old_input']);
+        return $old;
+    }
 }

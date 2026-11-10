@@ -87,6 +87,18 @@ class FlightController extends Controller
     public function create(array $params = []): void
     {
         $this->requireRole(['admin', 'cok']);
+
+        // ДОБАВЛЕНО (10.11.2026, раунд 165) — см. докблок View::setOldInput().
+        // Если это повторный показ формы после неудачного сохранения —
+        // подкладываем то, что человек реально ввёл, обратно в $_POST: вся
+        // уже существующая в этом шаблоне разметка (`$_POST['поле'] ?? ''`)
+        // начинает работать так, как и было задумано, без переписывания
+        // самого шаблона.
+        $old = View::getOldInput();
+        if (!empty($old)) {
+            $_POST = $old;
+        }
+
         $airlines = $this->airlineModel->getAllActive();
         $airports = $this->airportModel->getAllActive();
         // ДОБАВЛЕНО (18.08.2026, раунд 16): список стоянок для выпадающего
@@ -100,8 +112,17 @@ class FlightController extends Controller
         // пустым, FlightService сам подставит стоянку после автосвязывания.
         $parkingStands = [];
         try {
+            // ИЗМЕНЕНО (10.11.2026, раунд 165): при первом, чистом показе формы
+            // $_POST пуст — поведение не изменилось (исключаются все занятые
+            // стоянки, см. докблок класса). Но если это повторный показ после
+            // ошибки и борт уже был введён (см. $old выше) — список стоянок
+            // должен сразу это учитывать, а не исключать "свою" же стоянку,
+            // как будто регистрация ещё не вводилась.
             $parkingStands = (new \App\Services\ParkingStandService())
-                ->getAvailableStands((new ParkingStand())->getAllActive());
+                ->getAvailableStands(
+                    (new ParkingStand())->getAllActive(),
+                    ['aircraft_registration' => $_POST['aircraft_registration'] ?? null]
+                );
         } catch (\Throwable $e) {}
         // ДОБАВЛЕНО (16.10.2026, раунд 93, по прямому указанию пользователя,
         // по итогам задвоенного рейса AXS4/T7POL — см.
@@ -302,6 +323,8 @@ class FlightController extends Controller
                   ->inList('operation_type', ['arrival', 'departure'], 'Operation Type');
 
         if ($validator->fails()) {
+            // ДОБАВЛЕНО (10.11.2026, раунд 165) — см. докблок View::setOldInput().
+            View::setOldInput($data);
             View::setFlash('error', $validator->firstError());
             $this->redirect('/flights/create');
             return;
@@ -309,6 +332,7 @@ class FlightController extends Controller
 
         $result = $this->flightService->createFlight($data);
         if (!$result['success']) {
+            View::setOldInput($data);
             View::setFlash('error', $result['error']);
             $this->redirect('/flights/create');
             return;
@@ -897,6 +921,25 @@ class FlightController extends Controller
             return;
         }
 
+        // ДОБАВЛЕНО (10.11.2026, раунд 165, по жалобе пользователя — живой
+        // случай рейса #311: создан импортом без регистрации и стоянки, ЦОК
+        // вводит регистрацию на форме редактирования — а список стоянок ниже
+        // по-прежнему исключает "свою" стоянку, потому что вычисляется по
+        // СТАРОЙ (ещё пустой в базе) регистрации, и сохранить нельзя, пока
+        // стоянка (обязательное поле, раунд 53) не выбрана — замкнутый круг.
+        // Раньше update() при такой ошибке просто редиректил сюда же, и ВСЁ
+        // только что введённое (включая сам борт) терялось — edit() заново
+        // читал рейс из базы с нуля. Теперь update() сохраняет отправленные
+        // данные (View::setOldInput()) перед редиректом, а здесь мы
+        // накладываем их поверх данных из базы — форма при повторном показе
+        // видит именно то, что ЦОК только что ввёл, а список стоянок ниже
+        // (который читает $flight['aircraft_registration']) пересчитывается
+        // уже с учётом этого борта — "своя" стоянка в нём снова появляется.
+        $oldInput = View::getOldInput();
+        if (!empty($oldInput)) {
+            $flight = array_merge($flight, $oldInput);
+        }
+
         // ДОБАВЛЕНО (аудит 09.07.2026, п.1): если по рейсу уже есть утверждённый/
         // отменённый/экспортированный акт — редактирование данных рейса запрещено,
         // чтобы не расходиться с данными, уже зафиксированными в подписанном акте.
@@ -1001,6 +1044,8 @@ class FlightController extends Controller
                   ->inList('operation_type', ['arrival', 'departure'], 'Operation Type');
 
         if ($validator->fails()) {
+            // ДОБАВЛЕНО (10.11.2026, раунд 165) — см. докблок View::setOldInput().
+            View::setOldInput($data);
             View::setFlash('error', $validator->firstError());
             $this->redirect('/flights/' . $params['id'] . '/edit');
             return;
@@ -1008,6 +1053,7 @@ class FlightController extends Controller
 
         $result = $this->flightService->updateFlight((int)$params['id'], $data);
         if (!$result['success']) {
+            View::setOldInput($data);
             View::setFlash('error', $result['error']);
             $this->redirect('/flights/' . $params['id'] . '/edit');
             return;
