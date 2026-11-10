@@ -395,6 +395,29 @@ class FlightController extends Controller
             return;
         }
 
+        // ДОБАВЛЕНО (10.11.2026, раунд 167, по жалобе пользователя): карточка
+        // рейса показывала "Время установки/уборки колодок" всегда как "—",
+        // хотя колодки по факту фиксируются супервайзером через чек-лист
+        // (заказ услуги CHOCKS, started_at/completed_at) практически всегда.
+        // Причина — resources/views/flights/show.php читало это значение
+        // НАПРЯМУЮ из flights.chocks_on/chocks_off (ручные поля карточки
+        // рейса), которые почти никогда не заполняются вручную (см. round 84:
+        // по факту время колодок идёт через заказ CHOCKS, не через ручной
+        // ввод). Та же проблема уже была решена для печатной Формы А
+        // (ActController::buildPrintData()) и для автоначислений
+        // (AutoChargeService::resolveChocksOnDateTime()/
+        // resolveChocksOffDateTime()) — здесь применяем тот же приоритет
+        // источников: сначала подтверждённый заказ CHOCKS, ручное поле — как
+        // запасной вариант, если заказа ещё нет.
+        $chocksOrder = (new FlightServiceOrder())->findByFlightAndServiceCode((int)$flight['id'], 'CHOCKS');
+        if ($chocksOrder) {
+            if (($flight['operation_type'] ?? '') === 'arrival' && !empty($chocksOrder['started_at'])) {
+                $flight['chocks_on'] = substr($chocksOrder['started_at'], 11, 5);
+            } elseif (($flight['operation_type'] ?? '') === 'departure' && !empty($chocksOrder['completed_at'])) {
+                $flight['chocks_off'] = substr($chocksOrder['completed_at'], 11, 5);
+            }
+        }
+
         // Контроль сроков документооборота
         $deadlineService  = new DeadlineService();
         $flightDocModel   = new FlightDocument();
