@@ -22,6 +22,10 @@
                 <label class="form-label small fw-semibold">Дата по</label>
                 <input type="date" name="date_to" class="form-control form-control-sm" value="<?= e($filters['date_to']) ?>">
             </div>
+            <div class="col-md-2">
+                <label class="form-label small fw-semibold" title="Заполните только это поле, чтобы найти рейсы/акты/записи ровно за один день — само подставит ту же дату в поля «с»/«по» выше (round 164).">На дату</label>
+                <input type="date" class="form-control form-control-sm" data-exact-date data-from="date_from" data-to="date_to">
+            </div>
             <div class="col-auto d-flex gap-2 mt-1">
                 <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i> Фильтр</button>
                 <a href="/permit-logs" class="btn btn-sm btn-outline-secondary">Сброс</a>

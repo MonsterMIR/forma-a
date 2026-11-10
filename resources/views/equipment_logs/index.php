@@ -12,10 +12,16 @@
                 </select>
             </div>
             <div class="col-md-2">
+                <label class="form-label small fw-semibold mb-1">С даты</label>
                 <input type="date" name="date_from" class="form-control form-control-sm" value="<?= e($filters['date_from']) ?>">
             </div>
             <div class="col-md-2">
+                <label class="form-label small fw-semibold mb-1">По дату</label>
                 <input type="date" name="date_to" class="form-control form-control-sm" value="<?= e($filters['date_to']) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small fw-semibold mb-1" title="Заполните только это поле, чтобы найти рейсы/акты/записи ровно за один день — само подставит ту же дату в поля «с»/«по» выше (round 164).">На дату</label>
+                <input type="date" class="form-control form-control-sm" data-exact-date data-from="date_from" data-to="date_to">
             </div>
             <div class="col-auto">
                 <button class="btn btn-primary btn-sm">Фильтр</button>

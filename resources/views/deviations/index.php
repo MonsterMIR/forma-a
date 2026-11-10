@@ -64,6 +64,10 @@ use App\Services\DeadlineService;
                 <input type="date" name="date_to" class="form-control form-control-sm" value="<?= e($filters['date_to']) ?>">
             </div>
             <div class="col-md-2">
+                <label class="form-label small fw-semibold mb-1" title="Заполните только это поле, чтобы найти рейсы/акты/записи ровно за один день — само подставит ту же дату в поля «с»/«по» выше (round 164).">На дату</label>
+                <input type="date" class="form-control form-control-sm" data-exact-date data-from="date_from" data-to="date_to">
+            </div>
+            <div class="col-md-2">
                 <button type="submit" class="btn btn-primary btn-sm w-100">
                     <i class="bi bi-funnel me-1"></i>Фильтр
                 </button>
