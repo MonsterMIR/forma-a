@@ -1827,7 +1827,7 @@ class FlightController extends Controller
     {
         try {
             (new \App\Models\AirlineParkingNorm())->upsert(
-                $airlineId, 2.5, 3.5, 'Авто-норма по умолчанию при создании авиакомпании (раунд 114)',
+                $airlineId, 2.0, 3.0, 'Авто-норма по умолчанию при создании авиакомпании (раунд 174, обновлено с 2.5/3.5)',
                 (int)(\App\Core\Auth::id() ?? 1)
             );
         } catch (\Throwable $e) {
