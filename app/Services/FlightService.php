@@ -138,11 +138,21 @@ class FlightService
         // других ВС пока не будет освобождена" — см. ParkingStandService.
         // Проверяем ДО вставки строки, чтобы конфликтный рейс вообще не
         // создавался с занятой стоянкой.
+        // ИЗМЕНЕНО (12.11.2026, раунд 174, по прямому указанию пользователя):
+        // "может быть такие моменты когда разрешение на рейс поступают
+        // срочно и с запасом... получается стоянка им занята а хотя можем
+        // принят и отправить один другой борт" — на этапе планирования
+        // (создание рейса) больше НЕ блокируем по старому определению
+        // занятости (просто "МС№ уже записан за кем-то"), только
+        // предупреждаем. Настоящая блокировка теперь — в момент физической
+        // установки колодок, см. ParkingStandService::findConflict() и
+        // ServiceOrderController::updateTiming().
+        $standWarning = null;
         if (!empty($insertData['mc_number'])) {
             $standService = new ParkingStandService();
-            $conflict = $standService->findConflict($insertData, null);
-            if ($conflict) {
-                return ['success' => false, 'error' => $standService->describeConflict($conflict)];
+            $plannedConflict = $standService->findPlannedConflict($insertData, null);
+            if ($plannedConflict) {
+                $standWarning = $standService->describeConflict($plannedConflict);
             }
         }
 
@@ -252,7 +262,7 @@ class FlightService
             error_log('FlightService::createFlight seedDefaultServiceOrders failed for flight ' . $id . ': ' . $e->getMessage());
         }
 
-        return ['success' => true, 'id' => $id];
+        return ['success' => true, 'id' => $id, 'warning' => $standWarning];
     }
 
     /**
@@ -413,12 +423,18 @@ class FlightService
         // Настоящий перенос стоянки посреди визита всё так же проходит
         // полную проверку (как здесь при смене значения, так и отдельно —
         // через ParkingStandService::recordMove(), канал супервайзера).
+        // ИЗМЕНЕНО (12.11.2026, раунд 174, по прямому указанию пользователя):
+        // см. комментарий в createFlight() — больше не блокируем по
+        // старому определению занятости при простом редактировании/смене
+        // МС№, только предупреждаем. Настоящая блокировка — в момент
+        // физической установки колодок.
+        $standWarning = null;
         $existingMcNumber = strtoupper(trim((string)($existing['mc_number'] ?? '')));
         if (!empty($updateData['mc_number']) && $updateData['mc_number'] !== $existingMcNumber) {
             $standService = new ParkingStandService();
-            $conflict = $standService->findConflict($updateData, $id);
-            if ($conflict) {
-                return ['success' => false, 'error' => $standService->describeConflict($conflict)];
+            $plannedConflict = $standService->findPlannedConflict($updateData, $id);
+            if ($plannedConflict) {
+                $standWarning = $standService->describeConflict($plannedConflict);
             }
         }
 
@@ -516,7 +532,7 @@ class FlightService
             error_log('FlightService::updateFlight syncLinkedAircraftData failed for flight ' . $id . ': ' . $e->getMessage());
         }
 
-        return ['success' => true];
+        return ['success' => true, 'warning' => $standWarning];
     }
 
     /**

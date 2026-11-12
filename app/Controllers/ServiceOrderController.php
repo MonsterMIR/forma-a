@@ -567,6 +567,26 @@ class ServiceOrderController extends Controller
     }
 
     /**
+     * ДОБАВЛЕНО (12.11.2026, раунд 174): код услуги (services.code) по id —
+     * тот же паттерн кэширования, что и serviceName() выше. Нужен
+     * updateTiming(), чтобы отличить отметку CHOCKS от остальных услуг
+     * (FlightServiceOrder::find() — обычный Model::find(), без JOIN на
+     * services).
+     */
+    private function serviceCode(int $serviceId): string
+    {
+        static $cache = [];
+        if (!isset($cache[$serviceId])) {
+            $db = \App\Core\Database::getInstance();
+            $stmt = $db->prepare("SELECT code FROM services WHERE id = ? LIMIT 1");
+            $stmt->execute([$serviceId]);
+            $code = $stmt->fetchColumn();
+            $cache[$serviceId] = $code !== false ? (string)$code : '';
+        }
+        return $cache[$serviceId];
+    }
+
+    /**
      * Супервайзер добавляет услугу, которую ЦОК не заказал заранее —
      * например возникла по ходу обслуживания. Попадает в тот же план
      * (flight_service_orders), видно и у соответствующей службы, и у ЦОК —
@@ -822,16 +842,20 @@ class ServiceOrderController extends Controller
         // ДОБАВЛЕНО (18.09.2026, раунд 48, по прямому указанию пользователя):
         // "Стоянка после того как на него поставили ВС она не доступна для
         // других ВС пока не будет освобождена" — см. ParkingStandService.
+        // ИЗМЕНЕНО (12.11.2026, раунд 174, по прямому указанию
+        // пользователя): супервайзер больше не блокируется старым
+        // определением занятости при простом назначении МС№, только
+        // предупреждается. Настоящая блокировка — в момент физической
+        // установки колодок (см. updateTiming() ниже).
+        $standWarning = null;
         if ($standNumber !== null) {
             $standService = new ParkingStandService();
-            $conflict = $standService->findConflict(
+            $plannedConflict = $standService->findPlannedConflict(
                 ['mc_number' => $standNumber, 'aircraft_registration' => $flight['aircraft_registration'] ?? null],
                 $flightId
             );
-            if ($conflict) {
-                View::setFlash('error', $standService->describeConflict($conflict));
-                $this->redirect('/supervisor/flights/' . $flightId);
-                return;
+            if ($plannedConflict) {
+                $standWarning = $standService->describeConflict($plannedConflict);
             }
         }
 
@@ -841,9 +865,13 @@ class ServiceOrderController extends Controller
             ? "Установлен номер стоянки: {$standNumber}."
             : 'Номер стоянки очищен.');
 
-        View::setFlash('success', $standNumber
+        $standMsg = $standNumber
             ? "Номер стоянки сохранён: {$standNumber}."
-            : 'Номер стоянки очищен.');
+            : 'Номер стоянки очищен.';
+        if ($standWarning !== null) {
+            $standMsg .= ' Внимание: ' . $standWarning;
+        }
+        View::setFlash('success', $standMsg);
         $this->redirect('/supervisor/flights/' . $flightId);
     }
 
@@ -1216,6 +1244,34 @@ class ServiceOrderController extends Controller
                 break;
 
             case 'complete':
+                // ДОБАВЛЕНО (12.11.2026, раунд 174, по прямому указанию
+                // пользователя): "правильно будет установка колодок =
+                // занятию стоянки" — именно отметка «Колодки установлены»
+                // на рейсе ПРИЛЁТА теперь и есть момент физического
+                // занятия стоянки, а не момент записи МС№ при планировании
+                // (см. ParkingStandService::findConflict()/
+                // directOccupant()). Жёсткая блокировка — ТОЛЬКО здесь.
+                if ($this->serviceCode($serviceId) === 'CHOCKS') {
+                    $flightForChocks = $this->flightModel->find($flightId);
+                    if ($flightForChocks && ($flightForChocks['operation_type'] ?? '') === 'arrival') {
+                        $standService = new ParkingStandService();
+                        $standCode = $standService->getCurrentStandForArrival($flightForChocks);
+                        if ($standCode !== null) {
+                            $standConflict = $standService->findConflict(
+                                ['mc_number' => $standCode, 'aircraft_registration' => $flightForChocks['aircraft_registration'] ?? null],
+                                $flightId
+                            );
+                            if ($standConflict) {
+                                $msg = $standService->describeConflict($standConflict);
+                                if ($isAjax) { $this->respondJson(false, $msg); return; }
+                                View::setFlash('error', $msg);
+                                $this->redirect('/supervisor/flights/' . $flightId);
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 $startedAt = $order['started_at'] ?: date('Y-m-d H:i:s');
                 $completedAt = date('Y-m-d H:i:s');
                 $this->model->update($orderId, [

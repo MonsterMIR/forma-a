@@ -75,6 +75,22 @@ use App\Models\Act;
  * считается от прилёта до вылета независимо от переносов (так сказал
  * пользователь), см. AutoChargeService — эта таблица только для
  * занятости/освобождения в реальном времени.
+ *
+ * ИЗМЕНЕНО (12.11.2026, раунд 174, по прямому указанию пользователя):
+ * "правильно будет установка колодок = занятию стоянки. может быть такие
+ * моменты когда разрешение на рейс поступают срочно и с запасом... а
+ * хотя можем принят и отправить один другой борт" — определение "занята"
+ * выше (раунд 48) ИЗМЕНЕНО: простого назначения mc_number больше не
+ * достаточно для физической занятости — стоянка считается физически
+ * занятой только с момента ФАКТИЧЕСКОЙ установки колодок на рейсе прилёта
+ * (см. hasChocksOn(), $requirePhysical в directOccupant()/findConflict()).
+ * До этого момента (между назначением МС№ и фактической установкой
+ * колодок) стоянка считается лишь "запланированной" — findConflict() её
+ * больше не блокирует, только findPlannedConflict() может выдать
+ * предупреждение (не блокирующее) вызывающему коду. Жёсткая блокировка
+ * теперь происходит только в момент самой установки колодок —
+ * ServiceOrderController::updateTiming(), действие 'complete' по услуге
+ * CHOCKS на рейсе прилёта.
  */
 class ParkingStandService
 {
@@ -219,7 +235,7 @@ class ParkingStandService
      * строку рейса, который сейчас занимает эту стоянку (с добавленным
      * airline_name) — вызывающий код формирует сообщение об ошибке.
      */
-    public function findConflict(array $flightData, ?int $excludeFlightId = null): ?array
+    public function findConflict(array $flightData, ?int $excludeFlightId = null, bool $requirePhysical = true): ?array
     {
         $standNumber = strtoupper(trim((string)($flightData['mc_number'] ?? '')));
         if ($standNumber === '') {
@@ -228,7 +244,7 @@ class ParkingStandService
 
         $registration = strtoupper(trim((string)($flightData['aircraft_registration'] ?? '')));
 
-        $direct = $this->directOccupant($standNumber, $registration, $excludeFlightId);
+        $direct = $this->directOccupant($standNumber, $registration, $excludeFlightId, $requirePhysical);
         if ($direct !== null) {
             return $direct;
         }
@@ -239,7 +255,7 @@ class ParkingStandService
         // человеку понятное объяснение, а не просто "стоянка X занята",
         // когда реально занята её пара.
         foreach ($this->getBlockingSiblingCodes($standNumber) as $siblingCode) {
-            $viaSibling = $this->directOccupant($siblingCode, $registration, $excludeFlightId);
+            $viaSibling = $this->directOccupant($siblingCode, $registration, $excludeFlightId, $requirePhysical);
             if ($viaSibling !== null) {
                 $viaSibling['_conflict_via_stand'] = $siblingCode;
                 return $viaSibling;
@@ -250,12 +266,29 @@ class ParkingStandService
     }
 
     /**
+     * ДОБАВЛЕНО (12.11.2026, раунд 174, по прямому указанию пользователя):
+     * "может быть такие моменты когда разрешение на рейс поступают срочно
+     * и с запасом... получается стоянка им занята а хотя можем принят и
+     * отправить один другой борт" — на этапе ПЛАНИРОВАНИЯ (создание/
+     * редактирование рейса в ЦОК, назначение МС№ супервайзером) конфликт
+     * по старому (до раунда 174) определению — просто "стоянка уже
+     * записана за другим незакрытым визитом", без требования физической
+     * установки колодок — больше НЕ блокирует сохранение, только
+     * предупреждает. Настоящая (физическая) блокировка — см. findConflict()
+     * выше (по умолчанию $requirePhysical=true).
+     */
+    public function findPlannedConflict(array $flightData, ?int $excludeFlightId = null): ?array
+    {
+        return $this->findConflict($flightData, $excludeFlightId, false);
+    }
+
+    /**
      * ДОБАВЛЕНО (20.10.2026, раунд 104): прямая (без учёта парных
      * широких/узких стоянок) проверка занятости ОДНОЙ конкретной стоянки —
      * общая часть, вынесенная из findConflict()/getOccupyingFlight(), чтобы
      * обе проверяли занятость идентично и для себя, и для парной стоянки.
      */
-    private function directOccupant(string $standNumber, string $registration, ?int $excludeFlightId): ?array
+    private function directOccupant(string $standNumber, string $registration, ?int $excludeFlightId, bool $requirePhysical = true): ?array
     {
         // ДОБАВЛЕНО (20.10.2026, раунд 104, третья часть): визиты, у
         // которых была хотя бы одна запись переноса (flight_stand_moves) —
@@ -282,6 +315,17 @@ class ParkingStandService
                 continue;
             }
             if ($this->isFreed($arrival)) {
+                continue;
+            }
+            // ДОБАВЛЕНО (12.11.2026, раунд 174, по прямому указанию
+            // пользователя): "правильно будет установка колодок = занятию
+            // стоянки" — пока колодки на рейсе прилёта физически не
+            // установлены, стоянка считается только ЗАПЛАНИРОВАННОЙ, а не
+            // реально занятой (см. hasChocksOn(), findPlannedConflict()).
+            // Жёсткая блокировка теперь наступает только в момент самой
+            // установки колодок (ServiceOrderController::updateTiming(),
+            // действие complete по услуге CHOCKS на рейсе прилёта).
+            if ($requirePhysical && !$this->hasChocksOn($arrival)) {
                 continue;
             }
             // Показываем ФАКТИЧЕСКУЮ текущую стоянку (= проверяемую
@@ -315,6 +359,12 @@ class ParkingStandService
                 continue;
             }
             if ($this->isFreed($holder)) {
+                continue;
+            }
+            // ДОБАВЛЕНО (12.11.2026, раунд 174): см. комментарий выше у
+            // ветки с переносами — тот же гейт "физической" занятости для
+            // визитов без истории переносов.
+            if ($requirePhysical && !$this->hasChocksOn($holder)) {
                 continue;
             }
             return $holder;
@@ -556,6 +606,23 @@ class ParkingStandService
         }
 
         return $this->resolveChocksOffDateTime($departureFlightId) !== null;
+    }
+
+    /**
+     * ДОБАВЛЕНО (12.11.2026, раунд 174, по прямому указанию пользователя):
+     * "правильно будет установка колодок = занятию стоянки" — физическая
+     * занятость стоянки наступает не в момент записи mc_number (заявки/
+     * планирования), а в момент факта установки колодок на рейсе прилёта
+     * той же ротации. До этого момента стоянка считается лишь
+     * "запланированной" — см. findConflict()/findPlannedConflict() выше.
+     */
+    private function hasChocksOn(array $flight): bool
+    {
+        $arrivalId = $this->resolveArrivalFlightId($flight) ?? (int)($flight['id'] ?? 0);
+        if ($arrivalId <= 0) {
+            return false;
+        }
+        return $this->resolveChocksOnDateTime($arrivalId) !== null;
     }
 
     /**

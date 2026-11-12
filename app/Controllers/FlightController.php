@@ -378,6 +378,11 @@ class FlightController extends Controller
         $msg = $addedCount > 0
             ? "Рейс создан, предзаказ сохранён ({$addedCount} услуг)."
             : 'Рейс создан. Отметьте нужные услуги и транспорт ниже.';
+        // ДОБАВЛЕНО (12.11.2026, раунд 174): не блокирующее предупреждение
+        // о стоянке — см. FlightService::createFlight()/findPlannedConflict().
+        if (!empty($result['warning'])) {
+            $msg .= ' Внимание: ' . $result['warning'];
+        }
         View::setFlash('success', $msg);
         $this->redirect('/flights/' . $result['id']);
     }
@@ -1109,7 +1114,10 @@ class FlightController extends Controller
             error_log('FlightController::update syncPlan error: ' . $e->getMessage());
         }
 
-        View::setFlash('success', 'Рейс обновлён.' . $syncMsg);
+        // ДОБАВЛЕНО (12.11.2026, раунд 174): не блокирующее предупреждение
+        // о стоянке — см. FlightService::updateFlight()/findPlannedConflict().
+        $standWarningMsg = !empty($result['warning']) ? (' Внимание: ' . $result['warning']) : '';
+        View::setFlash('success', 'Рейс обновлён.' . $syncMsg . $standWarningMsg);
         $this->redirect('/flights/' . $params['id']);
     }
 
