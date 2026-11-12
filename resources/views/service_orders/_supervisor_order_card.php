@@ -109,6 +109,7 @@ $quantityFromTiming = !empty($o['quantity_from_timing']);
                     'done' => 'Оказано',
                     'in_progress' => 'В работе',
                     'planned' => 'Заказано',
+                    'cancelled' => 'Отменено',
                     default => $o['status'],
                 } ?>
             </span>
@@ -246,6 +247,35 @@ $quantityFromTiming = !empty($o['quantity_from_timing']);
                         <?= csrf_field() ?>
                         <input type="hidden" name="service_id" value="<?= (int)$o['service_id'] ?>">
                         <button type="submit" class="btn btn-outline-primary" title="Услугу можно оказать повторно — оплачивается отдельно">
+                            <i class="bi bi-arrow-repeat"></i> Заказать ещё раз
+                        </button>
+                    </form>
+                    <?php endif; ?>
+                <?php elseif ($o['status'] === 'cancelled'): ?>
+                    <?php /* ДОБАВЛЕНО (12.11.2026, раунд 173, по жалобе супервайзеров:
+                             заказали автобус для пассажиров, отказались, он снова
+                             понадобился — и дозаказать было нельзя): раньше для
+                             статуса 'cancelled' у НЕ-топливных услуг не было вообще
+                             ни одной ветки в этой цепочке if/elseif — блок действий
+                             оставался полностью пустым (ни подписи "Отменено", ни
+                             кнопки), а услуга пропадала и из выпадающего списка
+                             "Добавить услугу" (т.к. supervisorFlight() исключает её
+                             оттуда по самому факту наличия строки плана, независимо
+                             от статуса) — то есть отменённую услугу было физически
+                             неоткуда дозаказать. Решение то же, что уже работает для
+                             топлива (round126/140) и для 'done' выше (round58): если
+                             у услуги allow_repeat=1 и сейчас нет другого открытого
+                             (planned/in_progress) экземпляра — показываем ту же кнопку
+                             "Заказать ещё раз", создающую НОВУЮ позицию плана (история
+                             отмены в старой записи не трогается, видна как есть). Для
+                             услуг без allow_repeat — только нейтральная подпись
+                             "Отменено", без кнопки (как и раньше для топлива). */ ?>
+                    <span class="text-muted small fst-italic me-2">Отменено</span>
+                    <?php if (!empty($o['allow_repeat']) && empty($openServiceIds[(int)$o['service_id']])): ?>
+                    <form method="post" action="/supervisor/flights/<?= (int)$flight['id'] ?>/add-service" class="d-inline">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="service_id" value="<?= (int)$o['service_id'] ?>">
+                        <button type="submit" class="btn btn-outline-primary" title="Услугу можно заказать повторно — оплачивается отдельно">
                             <i class="bi bi-arrow-repeat"></i> Заказать ещё раз
                         </button>
                     </form>

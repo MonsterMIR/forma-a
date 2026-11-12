@@ -14,7 +14,15 @@ $deptLabels = [
     'gsm' => 'ГСМ', 'medical' => 'Здрав.пункт', 'balance' => 'ОЦ',
 ];
 
-$byStatus = ['in_progress' => [], 'planned' => [], 'done' => []];
+// ИСПРАВЛЕНО (12.11.2026, раунд 173, по жалобе супервайзеров: отменённая
+// услуга — например, автобус для пассажиров, который сначала заказали,
+// потом отменили, а потом он снова понадобился — полностью пропадала со
+// страницы после перезагрузки. Карточка для статуса cancelled уже была
+// добавлена в _supervisor_order_card.php (см. докблок там), но сюда,
+// в группировку по статусам, отменённые заявки не попадали вообще —
+// карточка физически не могла отрендериться при обычной загрузке
+// страницы (а не через AJAX-обновление без перезагрузки).
+$byStatus = ['in_progress' => [], 'planned' => [], 'done' => [], 'cancelled' => []];
 foreach ($orders as $o) {
     if (isset($byStatus[$o['status']])) $byStatus[$o['status']][] = $o;
 }
@@ -714,6 +722,11 @@ $sections = [
     'in_progress' => ['label' => 'В работе — сейчас', 'icon' => 'bi-hourglass-split', 'color' => 'warning'],
     'planned'     => ['label' => 'Заказано ЦОК',        'icon' => 'bi-clipboard',       'color' => 'secondary'],
     'done'        => ['label' => 'Оказано',              'icon' => 'bi-check-circle',    'color' => 'success'],
+    // ДОБАВЛЕНО (12.11.2026, раунд 173): секция для отменённых услуг —
+    // последняя по приоритету (не требует действия), но должна быть
+    // видна, чтобы можно было заказать услугу повторно (см. кнопку
+    // «Заказать ещё раз» в _supervisor_order_card.php).
+    'cancelled'   => ['label' => 'Отменено',             'icon' => 'bi-x-circle',        'color' => 'secondary'],
 ];
 foreach ($sections as $statusKey => $meta):
     if (empty($byStatus[$statusKey])) continue;
