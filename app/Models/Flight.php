@@ -368,12 +368,21 @@ class Flight extends Model
         string $flightDate,
         int $windowDays = 5
     ): ?array {
+        // ИСПРАВЛЕНО (13.11.2026, раунд 175): отменённый рейс (status=
+        // 'cancelled', см. round129) НЕ является "забытым" — он закрыт
+        // осознанно, просто без акта и без начислений (как и положено
+        // отменённому рейсу). Без этого условия создание нового, вполне
+        // легитимного рейса того же борта в пределах 5 дней от отменённого
+        // ложно блокировалось этой проверкой (round69) — обнаружено живым
+        // кейсом: UK888/MFX802 на 14.11.2026 блокировался отменённым
+        // рейсом №309 (802, UK888, 11.11.2026, status='cancelled').
         $stmt = $this->query(
             "SELECT f.id, f.flight_number, f.flight_date, f.operation_type, f.mc_number,
                     ABS(DATEDIFF(f.flight_date, ?)) AS date_diff
              FROM `flights` f
              WHERE f.aircraft_registration = ?
                AND f.operation_type = ?
+               AND f.status <> 'cancelled'
                AND ABS(DATEDIFF(f.flight_date, ?)) <= ?
                AND NOT EXISTS (SELECT 1 FROM `acts` a WHERE a.flight_id = f.id)
                AND NOT EXISTS (SELECT 1 FROM `flight_service_charges` c WHERE c.flight_id = f.id)
