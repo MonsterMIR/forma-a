@@ -75,6 +75,13 @@ $progressPct = $totalCount > 0 ? round($doneCount / $totalCount * 100) : 0;
                 <?php else: ?>
                     <span class="fst-italic">не указано</span>
                 <?php endif; ?>
+                <?php /* ДОБАВЛЕНО (18.11.2026, раунд 179, по прямому указанию
+                         пользователя): дата и время СОЗДАНИЯ рейса в системе
+                         (flights.created_at) — отдельно от даты/времени самого
+                         рейса выше, супервайзер должен видеть, когда рейс был
+                         заведён в систему. */ ?>
+                · Создан
+                <span class="fw-semibold"><?= e(format_datetime($flight['created_at'] ?? null)) ?></span>
             </div>
         </div>
         <div class="d-flex gap-2">

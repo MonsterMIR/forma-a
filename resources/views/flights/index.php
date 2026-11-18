@@ -116,6 +116,13 @@
                             <?php if (!empty($f['scheduled_time'])): ?>
                             <br><span class="text-muted small"><?= e(substr($f['scheduled_time'], 0, 5)) ?></span>
                             <?php endif; ?>
+                            <?php /* ДОБАВЛЕНО (18.11.2026, раунд 179, по прямому
+                                     указанию пользователя): дата и время создания
+                                     самого рейса в системе (flights.created_at) —
+                                     отдельно от даты/времени самого рейса выше. */ ?>
+                            <?php if (!empty($f['created_at'])): ?>
+                            <br><span class="text-muted" style="font-size:0.7rem">Создан: <?= e(format_datetime($f['created_at'])) ?></span>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <?php /* ИСПРАВЛЕНО (10.09.2026, раунд 36): в этой ячейке
