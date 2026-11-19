@@ -385,15 +385,32 @@ class HandlerCabinetController extends Controller
 
     /**
      * Логин система придумывает сама (пользователь заводит только ФИО) —
-     * транслитерация ФИО в латиницу + числовой суффикс при совпадении.
+     * ПРОЩЕ (18.11.2026, раунд 180, по прямому указанию пользователя:
+     * "алгоритм генерирования логина... надо бы упростить... что бы логин
+     * был фамилие.начальное буква имени типа grigoryan.a" — раньше в логин
+     * шло ПОЛНОЕ ФИО транслитом (фамилия.имя.отчество), получалось длинно
+     * и неудобно для хендлера печатать/диктовать по телефону, например
+     * "grigoryan.artem.skandarovich"). Теперь — только фамилия (первое
+     * слово ФИО) + первая буква имени (второе слово), отчество (если есть)
+     * не используется вовсе. Числовой суффикс при совпадении — как и
+     * раньше.
      */
     private function generateUniqueUsername(string $fullName): string
     {
-        $base = $this->transliterate($fullName);
-        $base = preg_replace('/[^a-z0-9]+/', '.', mb_strtolower($base, 'UTF-8'));
-        $base = trim((string)$base, '.');
-        if ($base === '') {
-            $base = 'rep';
+        $parts = preg_split('/\s+/u', trim($fullName), -1, PREG_SPLIT_NO_EMPTY);
+
+        $surname = $parts[0] ?? '';
+        $surnameSlug = $this->slugifyLatin($surname);
+
+        // Вторым словом ФИО считается имя (фамилия указывается первой —
+        // как и в исходном примере "Григорян Артем Скандарович"); если
+        // второго слова нет — логин состоит только из фамилии.
+        $firstNameInitial = isset($parts[1]) ? mb_substr($parts[1], 0, 1, 'UTF-8') : '';
+        $initialSlug      = $firstNameInitial !== '' ? $this->slugifyLatin($firstNameInitial) : '';
+
+        $base = $surnameSlug !== '' ? $surnameSlug : 'rep';
+        if ($initialSlug !== '') {
+            $base .= '.' . $initialSlug;
         }
         $base = substr($base, 0, 40);
 
@@ -404,6 +421,19 @@ class HandlerCabinetController extends Controller
             $username = $base . $suffix;
         }
         return $username;
+    }
+
+    /**
+     * ДОБАВЛЕНО (18.11.2026, раунд 180): транслитерация + приведение к
+     * a-z0-9 одного куска текста (фамилии или одной буквы имени) — общая
+     * часть, вынесенная из generateUniqueUsername() выше, чтобы фамилия и
+     * инициал имени обрабатывались идентично.
+     */
+    private function slugifyLatin(string $text): string
+    {
+        $latin = $this->transliterate($text);
+        $slug  = preg_replace('/[^a-z0-9]+/', '', mb_strtolower($latin, 'UTF-8'));
+        return trim((string)$slug);
     }
 
     private function transliterate(string $text): string
