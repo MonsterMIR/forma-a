@@ -1361,6 +1361,32 @@ class FlightController extends Controller
             $stmt2->execute([strtoupper($f['call_sign'] ?? ''), $f['date'] ?? '', $isArr ? 'arrival' : 'departure']);
             $dup = $stmt2->fetch(\PDO::FETCH_ASSOC) ?: null;
 
+            // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #1, по прямому
+            // указанию пользователя после анализа инцидента LSK3533/RA73533
+            // — см. claude/analysis-2026-11-19-round183-lsk3533-root-cause-and-safeguards.md):
+            // точное совпадение по flight_number выше НЕ находит уже
+            // существующую запись того же визита, если номер введён с
+            // опечаткой/расхождением (именно так появился рейс №357 —
+            // "3533" вместо "LSK3533"). Здесь — тот же борт + та же дата +
+            // та же операция, БЕЗ привязки к точному номеру рейса. Только
+            // предупреждение — не блокирует и не меняет 'selected' ниже.
+            $possibleDupByTail = null;
+            if (!empty($f['reg'])) {
+                $stmtTail = $db->prepare(
+                    "SELECT id, flight_number FROM flights
+                     WHERE aircraft_registration = ? AND flight_date = ? AND operation_type = ?
+                       AND status <> 'cancelled' AND flight_number <> ?
+                     LIMIT 1"
+                );
+                $stmtTail->execute([
+                    strtoupper(trim((string)$f['reg'])),
+                    $f['date'] ?? '',
+                    $isArr ? 'arrival' : 'departure',
+                    strtoupper($f['call_sign'] ?? ''),
+                ]);
+                $possibleDupByTail = $stmtTail->fetch(\PDO::FETCH_ASSOC) ?: null;
+            }
+
             // Ищем авиакомпанию в базе
             $dbAirline = null;
             if (!empty($f['operator_icao'])) {
@@ -1433,6 +1459,11 @@ class FlightController extends Controller
             if ($previewMtow === null)     $warnings[] = 'Не указан MTOW — впишите вручную в графе ВС/MTOW (поле обязательно для расчёта TLF и ночного сбора)';
             if (!$originAp)                $warnings[] = "Аэропорт {$originIcao} не найден в базе";
             if (!$destAp)                  $warnings[] = "Аэропорт {$destIcao} не найден в базе";
+            // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #1): см. комментарий
+            // у $possibleDupByTail выше.
+            if ($possibleDupByTail) {
+                $warnings[] = "Возможный дубликат по борту: в системе уже есть рейс №{$possibleDupByTail['flight_number']} (ID {$possibleDupByTail['id']}) того же борта, на ту же дату, та же операция, но с другим номером рейса — проверьте, не опечатка ли это в номере.";
+            }
 
             $flights[] = [
                 'flight_number'         => strtoupper($f['call_sign'] ?? ''),
@@ -1652,6 +1683,11 @@ class FlightController extends Controller
                     'scheduled_time'         => $scheduledTime,
                     'notes'                  => $notes ?: null,
                     'resolved_handler_id'    => $resolvedHandlerId,
+                    // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #5, по
+                    // прямому указанию пользователя): столбец существовал,
+                    // но никогда не проставлялся — см. комментарий в
+                    // FlightService::createFlight().
+                    'imported_from_perm'     => 1,
                 ]);
 
                 // ДОБАВЛЕНО (20.10.2026, раунд 103): привязка созданного

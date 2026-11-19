@@ -107,6 +107,17 @@ class FlightService
             // бы уже определённого хендлера при любом обычном сохранении
             // рейса. Пока это поле выставляется только один раз, при импорте.
             'resolved_handler_id'    => !empty($data['resolved_handler_id']) ? (int)$data['resolved_handler_id'] : null,
+            // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #5, по прямому
+            // указанию пользователя после анализа инцидента LSK3533/RA73533
+            // — см. claude/analysis-2026-11-19-round183-...): столбец
+            // существовал в БД (tinyint, default 0), но НИКОГДА не
+            // проставлялся — FlightController::importConfirm() его просто
+            // не передавал, поэтому даже рейсы, реально созданные через
+            // импорт разрешения, навсегда остаются с imported_from_perm=0.
+            // Значение приходит явно от вызывающей стороны (importConfirm()
+            // передаёт 1, обычная ручная форма создания — не передаёт,
+            // остаётся 0 по умолчанию).
+            'imported_from_perm'     => !empty($data['imported_from_perm']) ? 1 : 0,
         ];
 
         // ДОБАВЛЕНО (22.10.2026, раунд 117, по прямому указанию пользователя):
@@ -182,6 +193,30 @@ class FlightService
             }
         }
 
+        // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #2, по прямому
+        // указанию пользователя после анализа инцидента LSK3533/RA73533 —
+        // см. claude/analysis-2026-11-19-round183-lsk3533-root-cause-and-safeguards.md):
+        // findIdleDuplicate() выше не видит дубль, если у более раннего
+        // рейса уже есть акт/начисления — именно так прошёл незамеченным
+        // рейс №361 поверх уже оформленного актом №357. Здесь — та же
+        // проверка, но без этого исключения, и ТОЛЬКО как предупреждение
+        // (не блокировка) — присоединяется к $standWarning и показывается
+        // ЦОК тем же способом, что и предупреждение о занятой стоянке выше.
+        if (!empty($insertData['aircraft_registration'])) {
+            $possibleDup = $this->flightModel->findPossibleDuplicateWithActs(
+                $insertData['aircraft_registration'],
+                $insertData['operation_type'],
+                $insertData['flight_date']
+            );
+            if ($possibleDup) {
+                $dupDirLabel = $insertData['operation_type'] === 'arrival' ? 'прилёта' : 'вылета';
+                $dupWarning = "похожий рейс {$dupDirLabel} борта {$insertData['aircraft_registration']} уже есть в системе — "
+                    . "№{$possibleDup['flight_number']} от {$possibleDup['flight_date']} (ID {$possibleDup['id']}); "
+                    . "если это не отдельный визит, а дубликат — проверьте перед продолжением.";
+                $standWarning = $standWarning ? ($standWarning . ' ' . $dupWarning) : $dupWarning;
+            }
+        }
+
         $id = (int)$this->flightModel->insert($insertData);
 
         // РАУНД 117: новый борт (ни разу не встречавшийся в справочнике) —
@@ -220,7 +255,15 @@ class FlightService
         // Не должно прерывать создание рейса, если подбор пары по какой-то
         // причине упадёт.
         try {
-            $this->autoLinkFlight($id);
+            $linkResult = $this->autoLinkFlight($id);
+            // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #3): если автосвязка
+            // отработала, но была "почти неоднозначной" (см. autoLinkFlight()),
+            // показываем это предупреждение тем же способом, что и предупреждение
+            // о занятой стоянке / возможном дубле выше — без изменения того, что
+            // и с чем реально связалось.
+            if (!empty($linkResult['warning'])) {
+                $standWarning = $standWarning ? ($standWarning . ' ' . $linkResult['warning']) : $linkResult['warning'];
+            }
         } catch (\Throwable $e) {
             error_log('FlightService::createFlight autoLinkFlight failed for flight ' . $id . ': ' . $e->getMessage());
         }
@@ -513,7 +556,13 @@ class FlightService
         // ничего не делает; если регистрация разошлась со связанным рейсом —
         // снимает устаревшую связь и ищет новую.
         try {
-            $this->autoLinkFlight($id);
+            $linkResult = $this->autoLinkFlight($id);
+            // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #3): см. комментарий
+            // в createFlight() выше — то же самое предупреждение при
+            // пересмотре привязки после редактирования рейса.
+            if (!empty($linkResult['warning'])) {
+                $standWarning = $standWarning ? ($standWarning . ' ' . $linkResult['warning']) : $linkResult['warning'];
+            }
         } catch (\Throwable $e) {
             error_log('FlightService::updateFlight autoLinkFlight failed for flight ' . $id . ': ' . $e->getMessage());
         }
@@ -1040,9 +1089,34 @@ class FlightService
             return ['linked' => false, 'reason' => 'ambiguous', 'candidates' => $candidates];
         }
 
+        // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #3, по прямому указанию
+        // пользователя после анализа инцидента LSK3533/RA73533 — см.
+        // claude/analysis-2026-11-19-round183-lsk3533-root-cause-and-safeguards.md):
+        // помимо точной неоднозначности выше (два кандидата строго на
+        // одинаковой дистанции по времени), встречается "почти
+        // неоднозначность": второй кандидат близко по времени к первому, но
+        // не на одинаковой дистанции — именно так рейс №361 (1285 мин)
+        // проиграл рейсу №357 (1210 мин) всего на 75 минут из-за опечатки во
+        // времени у №357. Такую привязку НЕ блокируем и не меняем выбор —
+        // только предупреждаем, чтобы можно было проверить вручную. Порог
+        // относительный (15% от дистанции лучшего кандидата, но не меньше
+        // 60 минут) — чтобы не создавать лишний шум на коротких, заведомо
+        // однозначных разворотах того же дня.
+        $nearAmbiguousWarning = null;
+        if (count($candidates) > 1) {
+            $gap = (int)$candidates[1]['minute_diff'] - (int)$best['minute_diff'];
+            $threshold = max(60, (int)round(((int)$best['minute_diff']) * 0.15));
+            if ($gap >= 0 && $gap <= $threshold) {
+                $alt = $candidates[1];
+                $nearAmbiguousWarning = "Автосвязка рейса #{$flightId} выбрала рейс №{$best['flight_number']} (ID {$best['id']}) "
+                    . "как пару по времени, но есть близкий по времени альтернативный кандидат — №{$alt['flight_number']} "
+                    . "(ID {$alt['id']}), разница всего {$gap} мин. Если это не тот рейс — проверьте привязку вручную.";
+            }
+        }
+
         $result = $this->linkFlights($flightId, (int)$best['id']);
         if ($result['success']) {
-            return ['linked' => true, 'reason' => 'auto', 'linked_flight_id' => (int)$best['id']];
+            return ['linked' => true, 'reason' => 'auto', 'linked_flight_id' => (int)$best['id'], 'warning' => $nearAmbiguousWarning];
         }
         return ['linked' => false, 'reason' => 'link_failed', 'error' => $result['error'] ?? null];
     }
@@ -1260,7 +1334,15 @@ class FlightService
                 : ((new Act())->getLockStatus((int)$departure['id']) !== null);
 
             if ($standTargetLocked) {
-                $conflicts[] = "Стоянка не совпадает между связанными рейсами: прилёт #{$arrival['id']} (текущая стоянка) = {$arrStand}, вылет #{$departure['id']} = {$depStand} — автоматически не перезаписываю, у " . ($standTargetIsArrival ? 'прилёта' : 'вылета') . " уже заблокированный акт.";
+                // ИЗМЕНЕНО (19.11.2026, раунд 184, safeguard #4, по прямому
+                // указанию пользователя после анализа инцидента LSK3533/
+                // RA73533 — см. claude/analysis-2026-11-19-round183-...):
+                // такое расхождение стоянок у "пары" часто означает не
+                // ошибку ввода стоянки, а то, что рейс автосвязкой привязан
+                // не к тому рейсу того же борта (см. autoLinkFlight()) —
+                // добавлена подсказка проверить другие несвязанные рейсы той
+                // же регистрации, прежде чем править стоянку вручную.
+                $conflicts[] = "Стоянка не совпадает между связанными рейсами: прилёт #{$arrival['id']} (текущая стоянка) = {$arrStand}, вылет #{$departure['id']} = {$depStand} — автоматически не перезаписываю, у " . ($standTargetIsArrival ? 'прилёта' : 'вылета') . " уже заблокированный акт. Если стоянка у обоих рейсов указана верно, но они логически не пара — возможно, сработала неверная автосвязка; проверьте другие несвязанные рейсы борта " . ($flight['aircraft_registration'] ?? '?') . " за эти даты перед тем, как менять стоянку руками.";
             } elseif ($standTargetIsArrival) {
                 $arrPatch['mc_number'] = $standSourceVal;
             } else {

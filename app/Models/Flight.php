@@ -395,6 +395,43 @@ class Flight extends Model
     }
 
     /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #2 по итогам анализа
+     * инцидента LSK3533/RA73533 — см.
+     * claude/analysis-2026-11-19-round183-lsk3533-root-cause-and-safeguards.md):
+     * findIdleDuplicate() выше умышленно игнорирует рейсы, у которых уже
+     * есть акт или начисленные услуги (NOT EXISTS) — это сознательно узкое
+     * определение "забытого" дубля (раунд 69/175). Но именно поэтому, если
+     * дубль того же борта/направления УЖЕ был доведён до акта, следующий
+     * дубль того же борта проходит мимо ЭТОЙ проверки незамеченным — так
+     * появился рейс №361 поверх уже оформленного актом №357 (round183).
+     * Этот метод — тот же критерий (борт + направление + окно дат), НО без
+     * исключения по наличию акта/начислений. Используется ТОЛЬКО для
+     * предупреждения (см. FlightService::createFlight()), никогда для
+     * блокировки — иначе легитимный повторный визит того же борта (частый
+     * случай, см. комментарий выше про T7AAA7) стало бы невозможно создать.
+     */
+    public function findPossibleDuplicateWithActs(
+        string $registration,
+        string $operationType,
+        string $flightDate,
+        int $windowDays = 5
+    ): ?array {
+        $stmt = $this->query(
+            "SELECT f.id, f.flight_number, f.flight_date
+             FROM `flights` f
+             WHERE f.aircraft_registration = ?
+               AND f.operation_type = ?
+               AND f.status <> 'cancelled'
+               AND ABS(DATEDIFF(f.flight_date, ?)) <= ?
+             ORDER BY ABS(DATEDIFF(f.flight_date, ?)) ASC, f.id DESC
+             LIMIT 1",
+            [$registration, $operationType, $flightDate, $windowDays, $flightDate]
+        );
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /**
      * ДОБАВЛЕНО (18.09.2026, раунд 48): все рейсы, у которых сейчас указан
      * данный номер стоянки (mc_number) — используется ParkingStandService
      * для проверки занятости стоянки перед тем, как назначить её другому
