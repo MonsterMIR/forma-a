@@ -95,9 +95,19 @@ class ActSignatureController extends Controller
         }
 
         try {
-            $buildResult = (new ActService())->buildFromFlightCharges((int)$act['id'], $flightId);
-            if (($buildResult['added'] ?? 0) > 0) {
-                View::setFlash('info', 'Акт обновлён перед подписанием — добавлено: ' . implode(', ', $buildResult['added_names']) . '.');
+            $actServiceForBuild = new ActService();
+            $buildResult = $actServiceForBuild->buildFromFlightCharges((int)$act['id'], $flightId);
+            // ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию
+            // пользователя): перенос промежуточных (вне-рейсовых) услуг
+            // этого борта (анкета борта, round190) перед подписанием — см.
+            // докблок ActService::foldAircraftServiceLogIntoAct().
+            $foldResult = $actServiceForBuild->foldAircraftServiceLogIntoAct((int)$act['id'], $flightId);
+            $addedNamesAll = array_merge($buildResult['added_names'] ?? [], $foldResult['added_names'] ?? []);
+            if (!empty($addedNamesAll)) {
+                View::setFlash('info', 'Акт обновлён перед подписанием — добавлено: ' . implode(', ', $addedNamesAll) . '.');
+            }
+            if (!empty($foldResult['warnings'])) {
+                View::setFlash('warning', implode(' ', $foldResult['warnings']));
             }
             // Акт мог обновиться (сумма/состав) — перечитываем перед показом.
             $act = $this->actModel->findByFlightId($flightId);

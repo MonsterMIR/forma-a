@@ -68,11 +68,17 @@ class AircraftServiceLog extends Model
     /**
      * Вся лента промежуточных услуг конкретного борта, новые сверху —
      * используется для "анкеты борта" (AircraftController::show()).
+     *
+     * ДОБАВЛЕНО (19.11.2026, раунд 191): s.is_non_billable прокинут в
+     * выборку — нужен UI, чтобы отличить реально "ждущую свода в акт"
+     * услугу от просто информационной отметки (см. getDraftsByAircraft()
+     * ниже и AircraftController::show()).
      */
     public function getByAircraft(int $aircraftId): array
     {
         return $this->query(
             "SELECT l.*, s.name AS service_name, s.unit_name AS service_unit_name,
+                    s.is_non_billable AS service_is_non_billable,
                     u.full_name AS recorded_by_name,
                     cu.full_name AS cancelled_by_name,
                     a.act_number AS act_number, a.status AS act_status
@@ -85,6 +91,45 @@ class AircraftServiceLog extends Model
              ORDER BY l.rendered_at DESC, l.id DESC",
             [$aircraftId]
         )->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию пользователя —
+     * «анкета борта», Фаза 2): черновики этого борта, ГОТОВЫЕ к переносу в
+     * акт вылета — т.е. ещё не сведены (status=draft) И тарифицируемые
+     * (services.is_non_billable=0). Используется ActService::
+     * foldAircraftServiceLogIntoAct().
+     *
+     * Услуги с is_non_billable=1 (например CHOCKS — «Установка/уборка
+     * колодок»; по прямому указанию пользователя промежуточные
+     * снятия/установки колодок между рейсами фиксируются именно как такая
+     * услуга — просто факт в анкете для истории, "да пока так и сделай")
+     * сюда сознательно НЕ попадают и никогда не будут перенесены ни в
+     * какой акт — они так и останутся в статусе draft постоянно, это их
+     * ожидаемое конечное состояние, а не "зависшая" запись.
+     */
+    public function getDraftsByAircraft(int $aircraftId): array
+    {
+        return $this->query(
+            "SELECT l.*, s.name AS service_name, s.unit_name AS service_unit_name
+             FROM `aircraft_service_log` l
+             JOIN `services` s ON s.id = l.service_id
+             WHERE l.aircraft_id = ? AND l.status = 'draft' AND s.is_non_billable = 0
+             ORDER BY l.rendered_at ASC, l.id ASC",
+            [$aircraftId]
+        )->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 191): запись перенесена в акт —
+     * см. ActService::foldAircraftServiceLogIntoAct().
+     */
+    public function markFoldedIntoAct(int $id, int $actId): void
+    {
+        $this->update($id, [
+            'status' => 'folded_into_act',
+            'act_id' => $actId,
+        ]);
     }
 
     /**

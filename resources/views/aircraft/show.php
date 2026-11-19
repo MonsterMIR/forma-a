@@ -12,9 +12,20 @@
  * доступ, цок смотритель, а супервайзер он вводит все эти данные").
  * Отмена ошибочной записи ($canCancel) — только admin.
  *
- * ФАЗА 1: цена/тариф сознательно не считается и не показывается — см.
- * докблок AircraftServiceLog. Поэтому там, где в макете была "сумма
- * несведённых услуг", здесь — только количество записей.
+ * ФАЗА 1: цена/тариф сознательно не считается и не показывается в момент
+ * записи услуги — см. докблок AircraftServiceLog. Поэтому там, где в
+ * макете была "сумма несведённых услуг", здесь — только количество
+ * записей.
+ *
+ * ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию пользователя):
+ * Фаза 2 — перенос этих записей в акт ВЫЛЕТА с реальным расчётом суммы —
+ * реализована (см. ActService::foldAircraftServiceLogIntoAct()),
+ * срабатывает автоматически при каждой (пере)сборке акта. Услуги,
+ * помеченные в справочнике как не тарифицируемые (services.is_non_billable,
+ * например CHOCKS — "Установка/уборка колодок"), в акт никогда не
+ * переносятся и остаются в статусе draft ПОСТОЯННО — это их ожидаемое
+ * конечное состояние (просто факт для истории анкеты), не "зависшая"
+ * запись.
  */
 $aircraft   = $aircraft ?? [];
 $timeline   = $timeline ?? [];
@@ -46,6 +57,14 @@ $actStatusLabel = static function (?string $status): string {
     };
 };
 $serviceStatusBadge = static function (array $s): string {
+    // ИЗМЕНЕНО (19.11.2026, раунд 191): не тарифицируемая услуга
+    // (services.is_non_billable=1, напр. CHOCKS) в статусе draft — это не
+    // "ждёт свода в акт" (она туда никогда не попадёт, см.
+    // AircraftServiceLog::getDraftsByAircraft()), а просто служебная
+    // отметка для истории — отдельный, не тревожный бейдж.
+    if ($s['status'] === 'draft' && !empty($s['service_is_non_billable'])) {
+        return '<span class="badge bg-light text-muted border">служебная отметка</span>';
+    }
     return match ($s['status']) {
         'draft'           => '<span class="badge bg-warning text-dark">не сведена в акт</span>',
         'folded_into_act' => '<span class="badge bg-secondary">вошла в акт' . (!empty($s['act_number']) ? ' №' . e((string)$s['act_number']) : '') . '</span>',
@@ -121,8 +140,8 @@ $serviceStatusBadge = static function (array $s): string {
 <div class="alert alert-warning small">
     <i class="bi bi-exclamation-triangle-fill me-1"></i>
     <strong><?= $draftCount ?></strong> промежуточн<?= $draftCount === 1 ? 'ая услуга' : 'ых услуг(и)' ?>
-    этого борта ещё не сведен<?= $draftCount === 1 ? 'а' : 'ы' ?> в акт (сумма не считается в Фазе 1 — см. примечание внизу страницы).
-    Перенос в акт вылета будет реализован отдельным шагом (Фаза 2).
+    этого борта ещё не сведен<?= $draftCount === 1 ? 'а' : 'ы' ?> в акт.
+    Будут автоматически добавлены (с реальной суммой) в акт вылета при его формировании/обновлении — вручную ничего делать не нужно.
 </div>
 <?php endif; ?>
 
@@ -200,6 +219,9 @@ $serviceStatusBadge = static function (array $s): string {
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
                     <div>
                         <span class="badge bg-light text-dark border me-2">вне рейса</span>
+                        <?php if (!empty($s['service_is_non_billable'])): ?>
+                        <span class="badge bg-light text-muted border me-1" title="Не тарифицируется, в акт не переносится">служебная</span>
+                        <?php endif; ?>
                         <span class="fw-semibold"><?= e($s['service_name']) ?></span>
                         <span class="text-muted small ms-1"><?= e((string)$s['quantity']) ?> <?= e($s['service_unit_name'] ?? '') ?></span>
                         <?= $serviceStatusBadge($s) ?>
@@ -234,9 +256,12 @@ $serviceStatusBadge = static function (array $s): string {
 
 <div class="alert alert-info small mt-3 mb-0">
     <i class="bi bi-info-circle me-1"></i>
-    Фаза 1: промежуточные (вне-рейсовые) услуги записываются без расчёта суммы — факт оказания, без тарифа/НДС
-    (у такой записи ещё нет акта с реальными route_type/operation_type, по которым ищется тариф). Перенос этих
-    записей в акт вылета с расчётом суммы — следующий шаг (Фаза 2), отдельно согласуется до реализации.
+    Промежуточные (вне-рейсовые) услуги записываются здесь без расчёта суммы — факт оказания, без тарифа/НДС
+    (в момент записи ещё нет акта с реальными route_type/operation_type, по которым ищется тариф). Сумма
+    считается позже, автоматически, в момент формирования/обновления акта вылета — тем же способом, что и для
+    обычных услуг рейса, и дата/время оказания дописываются прямо в название строки акта (раздел «Прочие»).
+    Услуги, помеченные в справочнике как не тарифицируемые (например «Установка/уборка колодок»), в акт не
+    переносятся вообще — остаются в анкете просто как отметка для истории.
     Доступ на просмотр этой страницы — широкая роль-матрица (как у справочника бортов); запись услуги — admin/supervisor;
     отмена ошибочной записи — только admin; ЦОК видит анкету, но не редактирует.
 </div>

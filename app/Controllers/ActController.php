@@ -240,13 +240,23 @@ class ActController extends Controller
 
         $buildResult = $this->actService->buildFromFlightCharges($actId, (int)$act['flight_id']);
 
-        if (($buildResult['added'] ?? 0) > 0) {
-            View::setFlash('success', 'Добавлено новых услуг: ' . $buildResult['added'] . '.');
+        // ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию
+        // пользователя): перенос промежуточных (вне-рейсовых) услуг этого
+        // борта (анкета борта, round190) при каждом "Обновить" — см.
+        // докблок ActService::foldAircraftServiceLogIntoAct().
+        $foldResult = $this->actService->foldAircraftServiceLogIntoAct($actId, (int)$act['flight_id']);
+        $totalAdded = ($buildResult['added'] ?? 0) + ($foldResult['added'] ?? 0);
+
+        if ($totalAdded > 0) {
+            View::setFlash('success', 'Добавлено новых услуг: ' . $totalAdded . '.');
         } else {
             View::setFlash('success', 'Новых услуг от служб не найдено — акт уже актуален.');
         }
         if (!empty($buildResult['skipped'])) {
             View::setFlash('warning', implode('; ', $buildResult['skipped']));
+        }
+        if (!empty($foldResult['warnings'])) {
+            View::setFlash('warning', implode(' ', $foldResult['warnings']));
         }
         if (!empty($mandatoryWarnings)) {
             View::setFlash('warning', implode(' ', $mandatoryWarnings));

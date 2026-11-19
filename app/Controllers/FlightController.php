@@ -891,14 +891,21 @@ class FlightController extends Controller
 
         $buildResult = $actService->buildFromFlightCharges($actId, $flightId);
 
-        $added = $buildResult['added'] ?? 0;
-        $addedNames = $buildResult['added_names'] ?? [];
+        // ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию
+        // пользователя): перенос промежуточных (вне-рейсовых) услуг этого
+        // борта (анкета борта, round190) в акт — см. докблок ActService::
+        // foldAircraftServiceLogIntoAct(). Срабатывает только для акта
+        // вылета, на создание акта прилёта не влияет.
+        $foldResult = $actService->foldAircraftServiceLogIntoAct($actId, $flightId);
+
+        $added = ($buildResult['added'] ?? 0) + ($foldResult['added'] ?? 0);
+        $addedNames = array_merge($buildResult['added_names'] ?? [], $foldResult['added_names'] ?? []);
         $skipped    = $buildResult['skipped'] ?? [];
         // ИЗМЕНЕНО (14.08.2026, раунд 2, п.4): $mandatoryWarnings добавлены к
         // предупреждениям сборки акта — раньше вызовы setFlash('warning', ...)
         // по очереди затирали друг друга (сессия хранит одно сообщение на
         // тип), теперь все предупреждения собираются в одно сообщение.
-        $warnings   = array_merge($mandatoryWarnings, $buildResult['warnings'] ?? []);
+        $warnings   = array_merge($mandatoryWarnings, $buildResult['warnings'] ?? [], $foldResult['warnings'] ?? []);
 
         if ($added > 0) {
             $msg = "Форма А сформирована. Добавлено услуг: {$added}";

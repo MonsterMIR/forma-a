@@ -267,6 +267,103 @@ class ActService
         return ['success' => true];
     }
 
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию пользователя —
+     * «анкета борта», Фаза 2): перенос промежуточных (вне-рейсовых) услуг
+     * борта (App\Models\AircraftServiceLog, Фаза 1, round190) в акт
+     * ВЫЛЕТА — обычными строками акта, через тот же addActItem(), что и
+     * ручное добавление услуги ЦОК ("+ Добавить услугу"), с реальным
+     * тарифом/НДС: теперь это можно честно посчитать, потому что у акта
+     * есть route_type/operation_type/act_date, которых не было в момент
+     * записи услуги в анкету (именно поэтому Фаза 1 сознательно не считала
+     * деньги — см. докблок AircraftServiceLog).
+     *
+     * Вызывается из тех же трёх мест, что и buildFromFlightCharges() —
+     * FlightController::buildAct(), ActController::resync(),
+     * ActSignatureController::signForm() — то есть при каждой (пере)сборке
+     * акта, по прямому указанию пользователя ("автоматически при сборке
+     * акта (рекомендую)").
+     *
+     * Дата/время оказания дописываются В НАЗВАНИЕ строки акта (см.
+     * addActItem()/$nameSnapshot выше) — печатная форма не меняется,
+     * такая услуга просто не входит в фиксированный список кодов бланка
+     * и автоматически печатается в разделе "Прочие / Other services"
+     * (resources/views/acts/print.php, $other).
+     *
+     * Если у услуги нет действующего тарифа на дату/маршрут/тип операции
+     * этого акта — запись НЕ теряется и не блокирует сборку акта: остаётся
+     * черновиком в анкете борта, а причина попадает в $warnings (видно
+     * тем же способом, что и обычные предупреждения сборки акта).
+     *
+     * Услуги с services.is_non_billable=1 (например CHOCKS — по прямому
+     * указанию пользователя: промежуточные снятия/установки колодок между
+     * рейсами — просто факт в анкете, НЕ влияет на занятость стоянки и
+     * расчёт нормы, "да пока так и сделай") сюда вообще не попадают — см.
+     * AircraftServiceLog::getDraftsByAircraft().
+     *
+     * Применяется ТОЛЬКО к акту вылета ($act['operation_type']===
+     * 'departure') — промежуточные услуги накапливаются МЕЖДУ визитами и
+     * логически относятся к акту, которым визит завершается.
+     */
+    public function foldAircraftServiceLogIntoAct(int $actId, int $flightId): array
+    {
+        $act = $this->actModel->find($actId);
+        if (!$act || $act['operation_type'] !== 'departure') {
+            return ['added' => 0, 'added_names' => [], 'warnings' => []];
+        }
+        if (in_array($act['status'], ['approved', 'cancelled', 'exported'], true)) {
+            return ['added' => 0, 'added_names' => [], 'warnings' => []];
+        }
+
+        $flight = $this->flightModel->find($flightId);
+        $registration = strtoupper(trim((string)($flight['aircraft_registration'] ?? '')));
+        if ($registration === '') {
+            return ['added' => 0, 'added_names' => [], 'warnings' => []];
+        }
+
+        $aircraft = (new \App\Models\Aircraft())->findByRegistration($registration);
+        if (!$aircraft) {
+            return ['added' => 0, 'added_names' => [], 'warnings' => []];
+        }
+
+        $logModel = new \App\Models\AircraftServiceLog();
+        $drafts   = $logModel->getDraftsByAircraft((int)$aircraft['id']);
+
+        $added      = 0;
+        $addedNames = [];
+        $warnings   = [];
+
+        foreach ($drafts as $d) {
+            $ts     = strtotime((string)$d['rendered_at']);
+            $suffix = $ts !== false ? '(' . date('d.m.Y H:i', $ts) . ')' : '';
+
+            $noteParts = ['Промежуточная услуга вне рейса (анкета борта ' . $registration . ')'];
+            if (!empty($d['notes'])) {
+                $noteParts[] = (string)$d['notes'];
+            }
+
+            $result = $this->addActItem($actId, [
+                'service_id'       => (int)$d['service_id'],
+                'quantity'         => (float)$d['quantity'],
+                'name_suffix'      => $suffix,
+                'calculation_note' => implode(' — ', $noteParts),
+                'is_default'       => 1,
+            ]);
+
+            if ($result['success']) {
+                $logModel->markFoldedIntoAct((int)$d['id'], $actId);
+                $added++;
+                $addedNames[] = trim($d['service_name'] . ' ' . $suffix);
+            } else {
+                $warnings[] = 'Промежуточная услуга «' . $d['service_name'] . '» борта ' . $registration
+                    . ' ' . $suffix . ' не перенесена в акт: ' . $result['error']
+                    . ' — осталась черновиком в анкете борта.';
+            }
+        }
+
+        return ['added' => $added, 'added_names' => $addedNames, 'warnings' => $warnings];
+    }
+
     public function addActItem(int $actId, array $data): array
     {
         $act = $this->actModel->find($actId);
@@ -320,10 +417,20 @@ class ActService
         // поэтому по умолчанию 0 — поведение ручного добавления не менялось).
         // Используется для дедупликации при пересборке акта — см.
         // ActItem::deleteAutoByActAndService().
+        // ДОБАВЛЕНО (19.11.2026, раунд 191, по прямому указанию пользователя):
+        // необязательный $data['name_suffix'] — используется ТОЛЬКО
+        // ActService::foldAircraftServiceLogIntoAct() ниже, чтобы дописать
+        // дату/время промежуточной (вне-рейсовой) услуги прямо в название
+        // строки акта ("просто дописывать дату/время прямо в название
+        // строки ДА") — печатный бланк (раздел "Прочие") при этом не
+        // меняется, обычный ручной вызов addActItem() (без name_suffix)
+        // ведёт себя как раньше.
+        $nameSnapshot = $service['name'] . (!empty($data['name_suffix']) ? ' ' . $data['name_suffix'] : '');
+
         $itemData = [
             'act_id' => $actId, 'service_id' => (int)$data['service_id'],
             'tariff_version_id' => (int)$tariff['id'], 'line_no' => $lineNo,
-            'service_name_snapshot' => $service['name'], 'unit_name_snapshot' => $service['unit_name'],
+            'service_name_snapshot' => $nameSnapshot, 'unit_name_snapshot' => $service['unit_name'],
             'quantity' => $qty, 'unit_price' => $priceUsd, 'currency_id' => (int)$tariff['currency_id'],
             'cb_rate' => $cbRate, 'amount_without_vat' => $withoutVat,
             'vat_rate' => $vatRate, 'vat_amount' => $vatAmt, 'amount_with_vat' => $withVat,

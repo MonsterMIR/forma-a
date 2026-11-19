@@ -240,9 +240,19 @@ class AircraftController extends Controller
         }
 
         $timeline  = $this->aircraftModel->getDossierTimeline($aircraft);
+        // ИЗМЕНЕНО (19.11.2026, раунд 191): не тарифицируемые услуги
+        // (services.is_non_billable=1, напр. CHOCKS — промежуточные
+        // снятия/установки колодок) никогда не сводятся в акт (см.
+        // AircraftServiceLog::getDraftsByAircraft()) и остаются в статусе
+        // draft НАВСЕГДА по дизайну — это их ожидаемое конечное
+        // состояние, а не "зависшая" запись, поэтому не считаем их в
+        // счётчике "не сведено в акт" (иначе баннер был бы вечно активен
+        // и вводил бы в заблуждение).
         $draftCount = count(array_filter(
             $timeline,
-            static fn(array $e) => $e['type'] === 'service' && $e['data']['status'] === 'draft'
+            static fn(array $e) => $e['type'] === 'service'
+                && $e['data']['status'] === 'draft'
+                && empty($e['data']['service_is_non_billable'])
         ));
 
         $this->render('aircraft/show', [
