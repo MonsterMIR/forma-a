@@ -84,7 +84,7 @@ $basedCount = count(array_filter($items, fn($r) => !empty($r['is_based'])));
             <?php endif; ?>
             <?php foreach ($items as $r): $onGround = !empty($r['on_ground']); $isLastMovementArrival = $r['operation_type'] === 'arrival'; $disputed = $r['mtow'] === null; ?>
             <tr class="<?= $disputed ? 'table-warning' : '' ?>">
-                <td><code><?= e($r['registration']) ?></code></td>
+                <td><a href="/aircraft-status/<?= (int)$r['aircraft_id'] ?>"><code><?= e($r['registration']) ?></code></a></td>
                 <td><?= e($r['reg_aircraft_type'] ?? $r['flight_aircraft_type'] ?? '—') ?></td>
                 <td>
                     <?php if (!$disputed): ?>

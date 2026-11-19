@@ -327,6 +327,13 @@ $router->post('/aircraft-status/save',             [AircraftController::class, '
 $router->post('/aircraft-status/set-based',         [AircraftController::class, 'setBased'],   [AuthMiddleware::class, CsrfMiddleware::class]);
 $router->get('/aircraft-status/lookup',            [AircraftController::class, 'lookup'],      [AuthMiddleware::class]);
 $router->get('/aircraft-status/history',            [AircraftController::class, 'history'],     [AuthMiddleware::class]);
+// ДОБАВЛЕНО (19.11.2026, раунд 190, по прямому указанию пользователя —
+// «анкета борта»): /aircraft-status/{id} ВАЖНО регистрируется ПОСЛЕ
+// статичных /aircraft-status/lookup и /aircraft-status/history выше
+// (маршрутизатор матчит по порядку регистрации — см. App\Core\Router::dispatch()).
+$router->get('/aircraft-status/{id}',                [AircraftController::class, 'show'],         [AuthMiddleware::class]);
+$router->post('/aircraft-status/{id}/service',       [AircraftController::class, 'addService'],   [AuthMiddleware::class, CsrfMiddleware::class]);
+$router->post('/aircraft-status/{id}/service/{logId}/cancel', [AircraftController::class, 'cancelService'], [AuthMiddleware::class, CsrfMiddleware::class]);
 
 // =====================================================
 // Settings

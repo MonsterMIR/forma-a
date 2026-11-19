@@ -356,4 +356,40 @@ class Aircraft extends Model
 
         return null;
     }
+
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 190, по прямому указанию пользователя
+     * — «анкета борта»): единая хронологическая лента одного борта —
+     * рейсы+акты (Flight::getHistoryByRegistration(), без изменений, уже
+     * возвращает ровно то, что нужно для этой части ленты) вперемешку с
+     * промежуточными услугами вне рейса (AircraftServiceLog), по времени,
+     * новые сверху. См. докблок AircraftServiceLog — почему промежуточные
+     * услуги не могли раньше попасть ни в один акт (acts.flight_id —
+     * UNIQUE NOT NULL).
+     */
+    public function getDossierTimeline(array $aircraft): array
+    {
+        $flights  = (new Flight())->getHistoryByRegistration((string)$aircraft['registration']);
+        $services = (new AircraftServiceLog())->getByAircraft((int)$aircraft['id']);
+
+        $timeline = [];
+        foreach ($flights as $f) {
+            $timeline[] = [
+                'type' => 'flight',
+                'at'   => $f['flight_date'] . ' ' . ($f['scheduled_time'] ?? '00:00:00'),
+                'data' => $f,
+            ];
+        }
+        foreach ($services as $s) {
+            $timeline[] = [
+                'type' => 'service',
+                'at'   => $s['rendered_at'],
+                'data' => $s,
+            ];
+        }
+
+        usort($timeline, static fn(array $a, array $b) => strcmp((string)$b['at'], (string)$a['at']));
+
+        return $timeline;
+    }
 }

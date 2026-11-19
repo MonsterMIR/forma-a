@@ -8,7 +8,9 @@ use App\Core\Auth;
 use App\Core\Controller;
 use App\Core\View;
 use App\Models\Aircraft;
+use App\Models\AircraftServiceLog;
 use App\Models\Flight;
+use App\Models\Service;
 
 /**
  * ДОБАВЛЕНО (21.10.2026, раунд 108, по прямому указанию пользователя):
@@ -47,6 +49,19 @@ use App\Models\Flight;
  * и вылеты). Read-only отчёт (см. history()), доступ — та же широкая
  * роль-матрица, что и у index(), т.к. это просто детализация того же
  * справочника по одному борту, ничего не пишет в БД.
+ *
+ * ДОБАВЛЕНО (19.11.2026, раунд 190, по прямому указанию пользователя —
+ * «анкета борта»): show() — единая карточка одного борта (рейсы+акты
+ * вперемешку с промежуточными вне-рейсовыми услугами, см. App\Models\
+ * Aircraft::getDossierTimeline()); addService()/cancelService() — запись
+ * и отмена промежуточной услуги (App\Models\AircraftServiceLog). Доступ
+ * на просмотр (show) — та же широкая роль-матрица, что и у index()/
+ * history(); запись (addService) — admin+supervisor; отмена
+ * (cancelService) — только admin (цок — только просмотр, по прямому
+ * указанию пользователя). Доступна анкета ЛЮБОГО борта в справочнике, без
+ * привязки к is_based — пользователь явно отклонил такое ограничение.
+ * Цена/тариф в Фазе 1 сознательно не считается — см. докблок
+ * AircraftServiceLog.
  */
 class AircraftController extends Controller
 {
@@ -204,6 +219,116 @@ class AircraftController extends Controller
             'count'        => count($rows),
             'html'         => $this->renderHistoryHtml($rows),
         ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 190, по прямому указанию пользователя
+     * — «анкета борта»): единая карточка одного борта. Доступ — та же
+     * широкая роль-матрица, что и у index()/history() (просто ещё один
+     * производный отчёт по тем же данным + промежуточные услуги).
+     */
+    public function show(array $params = []): void
+    {
+        $this->requireRole(['admin', 'cok', 'sop', 'spo', 'sst', 'aero', 'spasop', 'commercial', 'finance', 'supervisor', 'gsm', 'medical', 'balance']);
+
+        $id = (int)($params['id'] ?? 0);
+        $aircraft = $this->aircraftModel->find($id);
+        if (!$aircraft) {
+            View::setFlash('error', 'Борт не найден.');
+            $this->redirect('/aircraft-status');
+            return;
+        }
+
+        $timeline  = $this->aircraftModel->getDossierTimeline($aircraft);
+        $draftCount = count(array_filter(
+            $timeline,
+            static fn(array $e) => $e['type'] === 'service' && $e['data']['status'] === 'draft'
+        ));
+
+        $this->render('aircraft/show', [
+            'title'      => 'Анкета борта ' . $aircraft['registration'],
+            'aircraft'   => $aircraft,
+            'timeline'   => $timeline,
+            'draftCount' => $draftCount,
+            'canLog'     => Auth::hasRole(['admin', 'supervisor']),
+            'canCancel'  => Auth::hasRole(['admin']),
+            'services'   => (new Service())->getAllActive(),
+        ]);
+    }
+
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 190, по прямому указанию пользователя):
+     * запись промежуточной (вне-рейсовой) услуги в анкету борта. Роль —
+     * admin + supervisor (ЦОК по прямому указанию пользователя — только
+     * просмотр: "коммерсам это безнадобности, админ да полный доступ, цок
+     * смотритель, а супервайзер он вводит все эти данные"). БЕЗ
+     * цены/тарифа — см. докблок App\Models\AircraftServiceLog.
+     */
+    public function addService(array $params = []): void
+    {
+        $this->requireRole(['admin', 'supervisor']);
+
+        $id = (int)($params['id'] ?? 0);
+        $aircraft = $this->aircraftModel->find($id);
+        if (!$aircraft) {
+            View::setFlash('error', 'Борт не найден.');
+            $this->redirect('/aircraft-status');
+            return;
+        }
+
+        $serviceId  = (int)$this->request->input('service_id');
+        $quantity   = (float)$this->request->input('quantity', 1);
+        $renderedAtRaw = trim((string)$this->request->input('rendered_at', ''));
+        $notes      = trim((string)$this->request->input('notes', ''));
+
+        $renderedAt = null;
+        if ($renderedAtRaw !== '') {
+            $ts = strtotime($renderedAtRaw);
+            if ($ts !== false) {
+                $renderedAt = date('Y-m-d H:i:s', $ts);
+            }
+        }
+
+        if (!$serviceId || $quantity <= 0 || $renderedAt === null) {
+            View::setFlash('error', 'Заполните услугу, количество и дату/время оказания.');
+            $this->redirect('/aircraft-status/' . $id);
+            return;
+        }
+
+        $logId = (new AircraftServiceLog())->createDraft($id, $serviceId, $renderedAt, $quantity, $notes ?: null, (int)Auth::id());
+
+        \App\Core\ActivityLogger::log(
+            'aircraft_service_log', $logId, 'aircraft_service_log_add', 'success',
+            "Записана промежуточная услуга (вне рейса) борту {$aircraft['registration']}: service_id={$serviceId}, qty={$quantity}, rendered_at={$renderedAt}",
+            null,
+            ['aircraft_id' => $id, 'service_id' => $serviceId, 'quantity' => $quantity, 'rendered_at' => $renderedAt]
+        );
+
+        View::setFlash('success', 'Услуга записана в анкету борта ' . $aircraft['registration'] . '.');
+        $this->redirect('/aircraft-status/' . $id);
+    }
+
+    /**
+     * ДОБАВЛЕНО (19.11.2026, раунд 190, по прямому указанию пользователя):
+     * отмена ошибочно внесённой промежуточной услуги — ТОЛЬКО admin, и
+     * ТОЛЬКО пока запись в статусе draft (см. AircraftServiceLog::cancel()).
+     */
+    public function cancelService(array $params = []): void
+    {
+        $this->requireRole(['admin']);
+
+        $id    = (int)($params['id'] ?? 0);
+        $logId = (int)($params['logId'] ?? 0);
+
+        $ok = (new AircraftServiceLog())->cancel($logId, (int)Auth::id());
+
+        if ($ok) {
+            \App\Core\ActivityLogger::log('aircraft_service_log', $logId, 'aircraft_service_log_cancel', 'success', "Отменена промежуточная запись №{$logId}", null, null);
+            View::setFlash('success', 'Запись отменена.');
+        } else {
+            View::setFlash('error', 'Запись не найдена или уже не черновик.');
+        }
+        $this->redirect('/aircraft-status/' . $id);
     }
 
     /**
