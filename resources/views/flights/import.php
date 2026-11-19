@@ -304,6 +304,41 @@
         </a>
     </div>
 
+    <?php /* ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #6, по прямому
+             указанию пользователя после анализа инцидента LSK3533/RA73533
+             — см. claude/analysis-2026-11-19-round183-...): напоминание о
+             ногах разрешения, которые были разобраны (шаг 2), но так и не
+             доведены до создания рейса на шаге 3 — за последние 14 дней. */ ?>
+    <?php if (!empty($pendingPermits)): ?>
+    <div class="alert alert-warning d-flex gap-2" style="border-radius:10px; font-size:.85rem;">
+        <div style="font-size:1.2rem; line-height:1;">⚠</div>
+        <div class="flex-grow-1">
+            <div class="fw-semibold mb-1">
+                Есть разрешения, в которых не все рейсы доведены до создания — проверьте, не забыли ли:
+            </div>
+            <?php foreach ($pendingPermits as $pp): ?>
+            <div class="mb-2 pb-2" style="border-bottom:1px dashed rgba(0,0,0,.1)">
+                <div class="text-muted" style="font-size:.78rem">
+                    Разобрано <?= e(format_datetime($pp['created_at'])) ?>
+                    <?php if ($pp['imported_by'] !== '—'): ?> — <?= e($pp['imported_by']) ?><?php endif; ?>
+                    · создано рейсов: <?= (int)$pp['linked_count'] ?> из <?= (int)$pp['leg_count'] ?>
+                </div>
+                <ul class="mb-0 ps-3" style="font-size:.82rem">
+                    <?php foreach ($pp['legs'] as $leg): ?>
+                    <li>
+                        <?= e($leg['flight_number'] ?? '') ?>
+                        (<?= e(($leg['direction'] ?? '') === 'ARR' ? 'прилёт' : 'вылет') ?>,
+                        <?= e($leg['date'] ?? '—') ?>, <?= e($leg['aircraft_registration'] ?? '') ?>,
+                        <?= e($leg['route'] ?? '') ?>)
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- ── Шаг-индикатор ── -->
     <div class="steps-bar">
         <div class="step-item active" id="step-ind-1">

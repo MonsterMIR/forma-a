@@ -1218,9 +1218,52 @@ class FlightController extends Controller
     public function importPage(array $params = []): void
     {
         $this->requireRole(['admin', 'cok']);
+
+        // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #6, по прямому указанию
+        // пользователя после анализа инцидента LSK3533/RA73533 — см.
+        // claude/analysis-2026-11-19-round183-lsk3533-root-cause-and-safeguards.md):
+        // напоминание о "ногах" разрешения, которые были разобраны на шаге
+        // предпросмотра (importParse(), см. $parsed_flights_json ниже), но
+        // так и не доведены до создания рейса (не выбраны/забыты на шаге
+        // подтверждения importConfirm()). Намеренно read-only и неблокирующее
+        // — просто список на этой же странице, за последние 14 дней.
+        $pendingPermits = [];
+        try {
+            $db   = \App\Core\Database::getInstance();
+            $rows = $db->prepare(
+                "SELECT prl.id, prl.created_at, prl.parsed_flights_json, u.full_name AS imported_by_name,
+                        (SELECT COUNT(*) FROM permit_raw_log_flights prlf WHERE prlf.permit_raw_log_id = prl.id) AS linked_count
+                 FROM permit_raw_logs prl
+                 LEFT JOIN users u ON u.id = prl.imported_by_user_id
+                 WHERE prl.parsed_flights_json IS NOT NULL
+                   AND prl.created_at >= (NOW() - INTERVAL 14 DAY)
+                 ORDER BY prl.created_at DESC"
+            );
+            $rows->execute();
+            foreach ($rows->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                $legs = json_decode($row['parsed_flights_json'] ?? '[]', true) ?: [];
+                $legCount = count($legs);
+                $linkedCount = (int)$row['linked_count'];
+                if ($legCount > $linkedCount) {
+                    $pendingPermits[] = [
+                        'id'           => (int)$row['id'],
+                        'created_at'   => $row['created_at'],
+                        'imported_by'  => $row['imported_by_name'] ?? '—',
+                        'legs'         => $legs,
+                        'leg_count'    => $legCount,
+                        'linked_count' => $linkedCount,
+                    ];
+                }
+            }
+        } catch (\Throwable $e) {
+            // Напоминание не должно ломать страницу импорта — только логируем.
+            error_log('importPage: pending permits check failed: ' . $e->getMessage());
+        }
+
         $this->render('flights/import', [
-            'title'      => 'Создание рейсов из разрешения',
-            'csrf_token' => Csrf::token(),
+            'title'          => 'Создание рейсов из разрешения',
+            'csrf_token'     => Csrf::token(),
+            'pendingPermits' => $pendingPermits,
         ]);
     }
 
@@ -1496,6 +1539,29 @@ class FlightController extends Controller
                 'selected'              => !$dup,
                 'db_airline_id'         => $dbAirline['id']    ?? null,
             ];
+        }
+
+        // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #6): сохраняем краткую
+        // сводку разобранных ног (номер, направление, дата, борт) в сам
+        // журнал разрешения — используется ТОЛЬКО для напоминания о "забытых"
+        // ногах на странице /flights/import (см. importPage() выше), не
+        // влияет на сам импорт.
+        if ($permitLogId) {
+            try {
+                $legsSummary = array_map(static function (array $fl): array {
+                    return [
+                        'flight_number'         => $fl['flight_number'] ?? '',
+                        'direction'             => $fl['direction'] ?? '',
+                        'date'                  => substr($fl['scheduled_departure'] ?? $fl['scheduled_arrival'] ?? '', 0, 10),
+                        'aircraft_registration' => $fl['aircraft_registration'] ?? '',
+                        'route'                 => ($fl['origin_icao'] ?? '') . ' → ' . ($fl['destination_icao'] ?? ''),
+                    ];
+                }, $flights);
+                $updStmt = $db->prepare("UPDATE permit_raw_logs SET parsed_flights_json = ? WHERE id = ?");
+                $updStmt->execute([json_encode($legsSummary, JSON_UNESCAPED_UNICODE), $permitLogId]);
+            } catch (\Throwable $e) {
+                error_log('permit_raw_logs parsed_flights_json UPDATE error: ' . $e->getMessage());
+            }
         }
 
         ob_end_clean();
