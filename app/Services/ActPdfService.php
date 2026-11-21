@@ -74,6 +74,21 @@ class ActPdfService
             $options->set('isRemoteEnabled', false);
             $options->set('defaultFont', 'DejaVu Sans'); // кириллица без доп. настройки шрифтов
 
+            // ИСПРАВЛЕНО (21.11.2026, раунд 199, по жалобе пользователя: в PDF,
+            // присланном на почту, видны кнопки "← Назад"/"Печать / PDF", а
+            // таблица бланка слегка обрезана по правому краю страницы --
+            // "форма чуть-чуть убежала, таблица смещена"): у dompdf
+            // defaultMediaType по умолчанию равен 'screen', а НЕ 'print'.
+            // Это значит, что блок @media print в print.php (который прячет
+            // .no-print и выставляет правильные поля/ширину страницы под A4)
+            // при генерации PDF просто никогда не применялся -- вступали в
+            // силу только экранные правила (.page{width:210mm;margin:0 auto}
+            // без сброса padding, .no-print без display:none). Тот же HTML,
+            // что видит пользователь по кнопке "Печать" в браузере, браузер
+            // сам подставляет print-правила при реальной печати/"Сохранить
+            // как PDF" -- а dompdf это делает только если явно попросить.
+            $options->set('defaultMediaType', 'print');
+
             $dompdf = new \Dompdf\Dompdf($options);
             $dompdf->loadHtml($html, 'UTF-8');
             $dompdf->setPaper('A4', 'portrait');
