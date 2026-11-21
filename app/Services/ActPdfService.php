@@ -53,6 +53,22 @@ class ActPdfService
             return null;
         }
 
+        // ИСПРАВЛЕНО (21.11.2026, раунд 195, по жалобе пользователя: PDF во
+        // вложении письма пришёл со сплошными "?" вместо кириллицы): CSS
+        // самой печатной формы (print.php) явно задаёт
+        // font-family: Arial, Helvetica, sans-serif -- dompdf резолвит это
+        // в свой встроенный core-шрифт Helvetica (WinAnsi, без кириллических
+        // глифов). $options->set('defaultFont', ...) ниже срабатывает ТОЛЬКО
+        // когда font-family вообще не указан в CSS -- раз он указан явно,
+        // до сих пор не применялся к этой форме вовсе. Принудительно
+        // переопределяем шрифт на кириллический DejaVu Sans прямо в HTML
+        // (!important, добавлено в конец документа -- побеждает по порядку
+        // каскада при равной специфичности) -- только для PDF-рендера; то,
+        // что пользователь видит в браузере по кнопке "Печать"
+        // (ActController::printForm()/renderPrintHtml()), не затронуто --
+        // там этот блок не добавляется.
+        $html .= '<style>*, *::before, *::after { font-family: "DejaVu Sans", sans-serif !important; }</style>';
+
         try {
             $options = new \Dompdf\Options();
             $options->set('isRemoteEnabled', false);
