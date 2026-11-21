@@ -1094,12 +1094,48 @@ class ActService
         }
 
         $act = $this->actModel->findWithDetails($actId);
-        if (!$act || empty($act['airline_rep_employee_id'])) {
+        if (!$act) {
             return;
         }
 
-        $employee = (new HandlerEmployee())->find((int)$act['airline_rep_employee_id']);
-        if (!$employee || empty($employee['email'])) {
+        // ДОБАВЛЕНО (21.11.2026, раунд 194, по прямому указанию пользователя):
+        // "акт уходит на две почты. то есть подписанту и его директору, а
+        // директор это и есть администратор хендлера" -- получателей теперь
+        // двое (когда оба известны): сотрудник-подписант (как и раньше,
+        // acts.airline_rep_employee_id -> handler_employees.email) И
+        // администратор(ы) того же хендлера (роль handler_admin, см.
+        // getHandlerAdminRecipients() ниже). Хендлер берётся напрямую из
+        // acts.handler_id (не через подписанта) -- письмо админу уйдёт,
+        // даже если конкретный подписант-сотрудник ещё не выбран.
+        $recipients = [];
+
+        if (!empty($act['airline_rep_employee_id'])) {
+            $employee = (new HandlerEmployee())->find((int)$act['airline_rep_employee_id']);
+            if ($employee && !empty($employee['email'])) {
+                $recipients[] = ['email' => $employee['email'], 'name' => $employee['full_name'] ?? ''];
+            }
+        }
+
+        if (!empty($act['handler_id'])) {
+            foreach ($this->getHandlerAdminRecipients((int)$act['handler_id']) as $admin) {
+                $recipients[] = $admin;
+            }
+        }
+
+        // Де-дублируем по email (вдруг один и тот же человек и подписант, и
+        // администратор, либо адреса совпали по иной причине) -- не шлём
+        // дважды на один и тот же ящик.
+        $seenEmails = [];
+        $recipients = array_values(array_filter($recipients, function (array $r) use (&$seenEmails): bool {
+            $key = strtolower(trim((string)$r['email']));
+            if ($key === '' || isset($seenEmails[$key])) {
+                return false;
+            }
+            $seenEmails[$key] = true;
+            return true;
+        }));
+
+        if (empty($recipients)) {
             return;
         }
 
@@ -1113,18 +1149,21 @@ class ActService
         $subject = 'Акт № ' . $act['act_number'] . ' утверждён — рейс ' . $act['flight_number'];
         $scan    = $this->getScanAttachment($actId);
 
-        $html  = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;">';
-        $html .= '<p>Здравствуйте' . (!empty($employee['full_name']) ? ', ' . htmlspecialchars($employee['full_name']) : '') . '!</p>';
-        $html .= '<p>Акт № <b>' . htmlspecialchars((string)$act['act_number']) . '</b> по рейсу '
+        // ИЗМЕНЕНО (21.11.2026, раунд 194): персональное приветствие по имени
+        // вынесено из общего тела письма (получателей теперь может быть
+        // несколько разных людей) -- $htmlBody содержит только общую часть
+        // (без обёртки <div> и без приветствия), приветствие + обёртка
+        // добавляются индивидуально в цикле отправки ниже.
+        $htmlBody  = '<p>Акт № <b>' . htmlspecialchars((string)$act['act_number']) . '</b> по рейсу '
             . htmlspecialchars((string)$act['flight_number']) . ' от ' . format_date($act['act_date']) . ' утверждён.</p>';
-        $html .= '<p>Авиакомпания: ' . htmlspecialchars((string)$act['airline_name']) . '<br>';
-        $html .= 'Сумма: <b>' . number_format((float)$act['total_amount_with_vat'], 2) . ' ' . htmlspecialchars($currency) . '</b></p>';
+        $htmlBody .= '<p>Авиакомпания: ' . htmlspecialchars((string)$act['airline_name']) . '<br>';
+        $htmlBody .= 'Сумма: <b>' . number_format((float)$act['total_amount_with_vat'], 2) . ' ' . htmlspecialchars($currency) . '</b></p>';
         if ($verifyUrl) {
-            $html .= '<p>Проверить акт: <a href="' . htmlspecialchars($verifyUrl) . '">' . htmlspecialchars($verifyUrl) . '</a></p>';
+            $htmlBody .= '<p>Проверить акт: <a href="' . htmlspecialchars($verifyUrl) . '">' . htmlspecialchars($verifyUrl) . '</a></p>';
         }
-        $html .= '<p style="color:#777;font-size:12px;">Письмо отправлено автоматически системой Forma A. '
+        $htmlBody .= '<p style="color:#777;font-size:12px;">Письмо отправлено автоматически системой Forma A. '
             . ($scan ? 'Скан подписанного акта — во вложении.' : 'Полная печатная копия акта доступна в системе.')
-            . '</p></div>';
+            . '</p>';
 
         $attachments = $scan ? [$scan] : [];
 
@@ -1157,11 +1196,45 @@ class ActService
             }
         }
 
-        $mailer->send($employee['email'], (string)$employee['full_name'], $subject, $html, $attachments);
+        foreach ($recipients as $recipient) {
+            $greeting = '<p>Здравствуйте' . (!empty($recipient['name']) ? ', ' . htmlspecialchars((string)$recipient['name']) : '') . '!</p>';
+            $html     = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;">' . $greeting . $htmlBody . '</div>';
+            $mailer->send((string)$recipient['email'], (string)($recipient['name'] ?? ''), $subject, $html, $attachments);
+        }
 
         if ($pdfTmpPath !== null && is_file($pdfTmpPath)) {
             @unlink($pdfTmpPath);
         }
+    }
+
+    /**
+     * ДОБАВЛЕНО (21.11.2026, раунд 194): администратор(ы) хендлера (роль
+     * handler_admin, users.handler_id) -- второй получатель копии
+     * утверждённого акта, по прямому указанию пользователя ("акт уходит
+     * на две почты -- подписанту и его директору"). Обычно один человек
+     * на хендлера, но метод не предполагает этого и возвращает всех
+     * активных администраторов этого хендлера с заполненным email.
+     *
+     * @return array<int, array{email:string, name:string}>
+     */
+    private function getHandlerAdminRecipients(int $handlerId): array
+    {
+        $stmt = Database::getInstance()->prepare(
+            "SELECT u.email, u.full_name
+             FROM users u
+             JOIN roles r ON r.id = u.role_id
+             WHERE r.code = 'handler_admin'
+               AND u.handler_id = ?
+               AND u.is_active = 1
+               AND u.email IS NOT NULL AND u.email <> ''"
+        );
+        $stmt->execute([$handlerId]);
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+        return array_map(
+            static fn(array $r): array => ['email' => $r['email'], 'name' => $r['full_name'] ?? ''],
+            $rows
+        );
     }
 
     /** Последний загруженный файл акта (скан/PDF), если есть — для вложения в письмо. */
