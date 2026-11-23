@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Auth;
 use App\Core\Controller;
 use App\Core\Csrf;
 use App\Core\Request;
@@ -13,6 +14,7 @@ use App\Core\Validator;
 use App\Models\Flight;
 use App\Models\Airline;
 use App\Models\Airport;
+use App\Models\User;
 use App\Services\FlightService;
 use App\Services\DeadlineService;
 use App\Models\FlightDocument;
@@ -84,10 +86,31 @@ class FlightController extends Controller
         // как и раньше считает рейсы, а не дни — поэтому день иногда может
         // быть разрезан между страницами, это явно показывается) и
         // 'calendar' (Вариант 3 — один день на экран, навигация ‹ день ›).
-        $view = $this->request->get('view', 'list');
-        if (!in_array($view, ['days', 'grouped', 'calendar'], true)) {
-            $view = 'list';
+        //
+        // ДОБАВЛЕНО (23.11.2026, раунд 205, по прямому указанию
+        // пользователя — "сделать выбранную страницу по умолчанию"):
+        // явно выбранный режим (клик по кнопке-тумблеру) запоминается в
+        // users.flights_view_mode (по аналогии с уже существующим
+        // users.dashboard_style — та же идея: личная настройка интерфейса
+        // конкретного пользователя) и становится умолчанием при заходе на
+        // /flights без ?view= вообще. Отдельного экрана "настройки" не
+        // нужно — запоминание происходит прямо по клику на тумблер.
+        $validViews   = ['list', 'grouped', 'days', 'calendar'];
+        $explicitView = $this->request->get('view', null);
+        $currentUser  = Auth::user();
+
+        if ($explicitView !== null && in_array($explicitView, $validViews, true)) {
+            $view = $explicitView;
+            if ($currentUser && ($currentUser['flights_view_mode'] ?? null) !== $view) {
+                (new User())->update((int)$currentUser['id'], ['flights_view_mode' => $view]);
+            }
+        } else {
+            $view = $currentUser['flights_view_mode'] ?? 'list';
+            if (!in_array($view, $validViews, true)) {
+                $view = 'list';
+            }
         }
+
         $airlines = $this->airlineModel->getAllActive();
 
         if ($view === 'days') {
