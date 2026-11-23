@@ -225,6 +225,82 @@ class Flight extends Model
     }
 
     /**
+     * ДОБАВЛЕНО (23.11.2026, раунд 203, по прямому указанию пользователя —
+     * "добавить ещё варианты как выбор", после визуализации 4 вариантов
+     * группировки списка рейсов): те же рейсы и колонки, что и у
+     * getFiltered() (сознательно не трогаем — см. комментарий раунда 202
+     * выше), но отсортированы по дате/времени рейса (а не f.id DESC) — для
+     * режима "Группировка" (плоский список с заголовками-разделителями по
+     * датам внутри обычной постраничной навигации по количеству рейсов,
+     * а не по дням — см. Вариант 1 в визуализации). Пагинация здесь обычная,
+     * по $limit/$offset рейсов — используется вместе с уже существующим
+     * countFiltered(), который от порядка сортировки не зависит.
+     */
+    public function getFilteredOrderedByDate(array $filters = [], int $limit = 20, int $offset = 0): array
+    {
+        [$whereStr, $params] = $this->buildFlightsWhere($filters);
+
+        $stmt = $this->query(
+            "SELECT f.*,
+                    al.name AS airline_name, al.iata_code AS airline_iata,
+                    oa.name AS origin_name, oa.iata_code AS origin_iata,
+                    da.name AS destination_name, da.iata_code AS destination_iata,
+                    a.id AS act_id, a.act_number AS act_number, a.number_finalized AS act_number_finalized,
+                    a.status AS act_status,
+                    (SELECT pm.status FROM passenger_manifests pm
+                      WHERE pm.flight_id = f.id AND pm.manifest_type = 'final'
+                      ORDER BY pm.created_at DESC LIMIT 1) AS manifest_status
+             FROM `flights` f
+             JOIN `airlines` al ON al.id = f.airline_id
+             LEFT JOIN `airports` oa ON oa.id = f.origin_airport_id
+             LEFT JOIN `airports` da ON da.id = f.destination_airport_id
+             LEFT JOIN `acts` a ON a.flight_id = f.id
+             WHERE {$whereStr}
+             ORDER BY f.flight_date ASC, COALESCE(f.scheduled_time, '00:00:00') ASC, f.id ASC
+             LIMIT {$limit} OFFSET {$offset}",
+            $params
+        );
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * ДОБАВЛЕНО (23.11.2026, раунд 203): сколько всего (по всем страницам)
+     * рейсов приходится на каждую из переданных дат — нужно режиму
+     * "Группировка" (getFilteredOrderedByDate() выше), чтобы понять, что
+     * день на границе страницы показан не полностью (часть рейсов этого
+     * дня — на соседней странице), и показать предупреждение, как в
+     * Варианте 1 визуализации ("ещё N рейсов — на странице N+1"). Без
+     * этого было бы не отличить "у дня было ровно 3 рейса" от "у дня было
+     * 5 рейсов, но 2 обрезала граница страницы".
+     */
+    public function countPerDateForDates(array $filters, array $dates): array
+    {
+        if (empty($dates)) {
+            return [];
+        }
+
+        [$whereStr, $params] = $this->buildFlightsWhere($filters);
+
+        $placeholders = implode(',', array_fill(0, count($dates), '?'));
+        $params       = array_merge($params, $dates);
+
+        $stmt = $this->query(
+            "SELECT f.flight_date, COUNT(*) AS cnt
+             FROM `flights` f
+             JOIN `airlines` al ON al.id = f.airline_id
+             WHERE {$whereStr} AND f.flight_date IN ({$placeholders})
+             GROUP BY f.flight_date",
+            $params
+        );
+
+        $result = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $result[$row['flight_date']] = (int)$row['cnt'];
+        }
+        return $result;
+    }
+
+    /**
      * Общие WHERE-условия для нового режима "По дням"
      * (getFilteredDistinctDates()/countFilteredDistinctDates()/
      * getFilteredForDates() выше) -- те же поля фильтра, что и в

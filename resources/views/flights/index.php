@@ -1,21 +1,26 @@
 <?php
 /**
  * ДОБАВЛЕНО (23.11.2026, раунд 202, по прямому указанию пользователя —
- * жалоба на то, что рейсы в списке "не по порядку" по датам, затем
- * визуализация 4 вариантов и выбор пользователя "аккордеон + переключатель
- * видов"): страница теперь поддерживает два режима ($mode, см.
- * FlightController::index()):
+ * жалоба на то, что рейсы в списке "не по порядку" по датам): после
+ * визуализации 4 вариантов группировки страница поддерживает несколько
+ * режимов ($mode, см. FlightController::index()):
  *   - 'list' — прежний плоский список без единого изменения в самой
  *     разметке строк/колонок (сортировка f.id DESC осталась как есть,
  *     см. раунд 36 — та сортировка это была прямая прошлая просьба
  *     пользователя, её никто не отменял);
- *   - 'days' — новый режим: рейсы сгруппированы по дате в Bootstrap-
- *     аккордеон (accordion, data-bs-parent — раскрыт всегда ровно один
- *     день, встроенное поведение Bootstrap 5, без единой строчки
- *     собственного JS), по умолчанию открыт день = сегодня (или первый
- *     день страницы, если сегодняшнего дня нет среди найденных).
+ *   - 'grouped' (Вариант 1, ДОБАВЛЕНО раунд 203) — тот же плоский список,
+ *     отсортированный по дате, с заголовками-разделителями между датами
+ *     внутри обычной постраничной навигации (считает рейсы, не дни — день
+ *     может быть разрезан страницей, тогда явно показано предупреждение);
+ *   - 'days' — рейсы сгруппированы по дате в Bootstrap-аккордеон
+ *     (accordion, data-bs-parent — раскрыт всегда ровно один день,
+ *     встроенное поведение Bootstrap 5, без единой строчки собственного
+ *     JS), по умолчанию открыт день = сегодня;
+ *   - 'calendar' (Вариант 3, ДОБАВЛЕНО раунд 203) — один день на экран,
+ *     навигация ‹ день / день › и быстрые переходы Сегодня/Завтра/
+ *     Послезавтра, без построчной пагинации.
  * Разметка одной строки таблицы и шапки таблицы вынесены в partials
- * _row.php/_head.php — используются в обоих режимах без дублирования.
+ * _row.php/_head.php — используются во всех режимах без дублирования.
  */
 ?>
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -80,7 +85,7 @@
             </div>
             <div class="col-auto d-flex gap-2 mt-2">
                 <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i> <?= __('COMMON_SEARCH') ?></button>
-                <a href="/flights<?= $mode === 'days' ? '?view=days' : '' ?>" class="btn btn-sm btn-outline-secondary"><?= __('COMMON_RESET') ?></a>
+                <a href="/flights<?= $mode !== 'list' ? '?view=' . e($mode) : '' ?>" class="btn btn-sm btn-outline-secondary"><?= __('COMMON_RESET') ?></a>
             </div>
         </form>
     </div>
@@ -100,17 +105,31 @@
 // просто убирается из ссылки (unset), а не подставляется принудительно --
 // тогда в контроллере $this->request->get('page', null) действительно
 // вернёт null, и страница с сегодняшним днём откроется как и задумано.
+// ДОБАВЛЕНО (23.11.2026, раунд 203, по прямому указанию пользователя —
+// "добавить ещё варианты как выбор"): ещё два визуализированных ранее
+// варианта добавлены как полноценные режимы — 'grouped' (Вариант 1) и
+// 'calendar' (Вариант 3). 'date' тоже убирается из базовой ссылки — иначе
+// переключение из "Календаря" в другой режим и обратно могло бы унести с
+// собой случайно выбранную в "Календаре" дату.
 $viewQueryBase = $_GET;
-unset($viewQueryBase['page']);
-$viewLinkList = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'list']));
-$viewLinkDays = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'days']));
+unset($viewQueryBase['page'], $viewQueryBase['date']);
+$viewLinkList     = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'list']));
+$viewLinkGrouped  = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'grouped']));
+$viewLinkDays     = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'days']));
+$viewLinkCalendar = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'calendar']));
 ?>
 <div class="btn-group mb-3" role="group" aria-label="Режим отображения списка рейсов">
     <a href="<?= e($viewLinkList) ?>" class="btn btn-sm <?= $mode === 'list' ? 'btn-dark' : 'btn-outline-dark' ?>">
         <i class="bi bi-list-ul"></i> Список
     </a>
+    <a href="<?= e($viewLinkGrouped) ?>" class="btn btn-sm <?= $mode === 'grouped' ? 'btn-dark' : 'btn-outline-dark' ?>">
+        <i class="bi bi-list-nested"></i> Группировка
+    </a>
     <a href="<?= e($viewLinkDays) ?>" class="btn btn-sm <?= $mode === 'days' ? 'btn-dark' : 'btn-outline-dark' ?>">
         <i class="bi bi-calendar3"></i> По дням
+    </a>
+    <a href="<?= e($viewLinkCalendar) ?>" class="btn btn-sm <?= $mode === 'calendar' ? 'btn-dark' : 'btn-outline-dark' ?>">
+        <i class="bi bi-calendar-week"></i> Календарь
     </a>
 </div>
 
@@ -186,6 +205,102 @@ $viewLinkDays = '?' . http_build_query(array_merge($viewQueryBase, ['view' => 'd
         </div>
     </div>
     <?php endif; ?>
+
+<?php elseif ($mode === 'grouped'): ?>
+
+    <!-- ДОБАВЛЕНО (23.11.2026, раунд 203): режим "Группировка" (Вариант 1) --
+         плоская таблица, но с заголовками-разделителями по датам внутри
+         обычной постраничной навигации (считает рейсы, а не дни — поэтому
+         день иногда разрезан страницей, предупреждение показывается прямо
+         в конце списка на этой странице, см. FlightController::index()). -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <?php include BASE_PATH . '/resources/views/flights/_head.php'; ?>
+                    </thead>
+                    <tbody>
+                    <?php if (empty($rows)): ?>
+                        <tr><td colspan="11" class="text-center text-muted py-4"><?= __('FLIGHTS_NO_DATA') ?></td></tr>
+                    <?php else: foreach ($rows as $row): ?>
+                        <?php if (!empty($row['isGroup'])): ?>
+                        <tr class="table-light">
+                            <td colspan="11">
+                                <strong><?= e($row['label']) ?></strong>
+                                <span class="badge bg-secondary rounded-pill ms-2"><?= e($row['count']) ?></span>
+                            </td>
+                        </tr>
+                        <?php elseif (!empty($row['isFlight'])): $f = $row['f']; ?>
+                            <?php include BASE_PATH . '/resources/views/flights/_row.php'; ?>
+                        <?php elseif (!empty($row['isGhost'])): ?>
+                        <tr>
+                            <td colspan="11" class="text-center text-warning small fst-italic py-2 border-top border-warning">
+                                <i class="bi bi-exclamation-triangle"></i> <?= e($row['label']) ?>
+                            </td>
+                        </tr>
+                        <?php endif; ?>
+                    <?php endforeach; endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php if ($pagination['last_page'] > 1): ?>
+        <div class="card-footer bg-white">
+            <?php include BASE_PATH . '/resources/views/layouts/_pagination.php'; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+
+<?php elseif ($mode === 'calendar'): ?>
+
+    <!-- ДОБАВЛЕНО (23.11.2026, раунд 203): режим "Календарь" (Вариант 3) --
+         один день на экран, навигация ‹ день / день › + быстрые переходы.
+         Без построчной пагинации — показаны все рейсы за выбранный день. -->
+    <?php
+        $calBaseQuery = $_GET;
+        unset($calBaseQuery['date']);
+        $calLinkPrev  = '?' . http_build_query(array_merge($calBaseQuery, ['view' => 'calendar', 'date' => $prevDate]));
+        $calLinkNext  = '?' . http_build_query(array_merge($calBaseQuery, ['view' => 'calendar', 'date' => $nextDate]));
+        $calLinkToday = '?' . http_build_query(array_merge($calBaseQuery, ['view' => 'calendar', 'date' => $todayStr]));
+        $calLinkTom   = '?' . http_build_query(array_merge($calBaseQuery, ['view' => 'calendar', 'date' => $tomorrowStr]));
+        $calLinkDA    = '?' . http_build_query(array_merge($calBaseQuery, ['view' => 'calendar', 'date' => $dayAfterStr]));
+    ?>
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body d-flex align-items-center justify-content-center gap-3">
+            <a href="<?= e($calLinkPrev) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-chevron-left"></i></a>
+            <div class="text-center">
+                <div class="fw-bold fs-5"><?= e($selectedLabel) ?></div>
+                <div class="text-muted small"><?= count($flights) ?> рейс(ов)</div>
+            </div>
+            <a href="<?= e($calLinkNext) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-chevron-right"></i></a>
+        </div>
+    </div>
+    <div class="d-flex gap-2 justify-content-center mb-3">
+        <a href="<?= e($calLinkToday) ?>" class="btn btn-sm <?= $selectedDate === $todayStr ? 'btn-dark' : 'btn-outline-dark' ?>">Сегодня</a>
+        <a href="<?= e($calLinkTom) ?>" class="btn btn-sm <?= $selectedDate === $tomorrowStr ? 'btn-dark' : 'btn-outline-dark' ?>">Завтра</a>
+        <a href="<?= e($calLinkDA) ?>" class="btn btn-sm <?= $selectedDate === $dayAfterStr ? 'btn-dark' : 'btn-outline-dark' ?>">Послезавтра</a>
+    </div>
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <?php include BASE_PATH . '/resources/views/flights/_head.php'; ?>
+                    </thead>
+                    <tbody>
+                    <?php if (empty($flights)): ?>
+                        <tr><td colspan="11" class="text-center text-muted py-4"><?= __('FLIGHTS_NO_DATA') ?></td></tr>
+                    <?php else: ?>
+                        <?php foreach ($flights as $f): ?>
+                            <?php include BASE_PATH . '/resources/views/flights/_row.php'; ?>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 
 <?php else: ?>
 

@@ -76,7 +76,18 @@ class FlightController extends Controller
         // пагинация режет список целыми днями, а не количеством рейсов --
         // см. App\Models\Flight::getFilteredDistinctDates()/getFilteredForDates()
         // и resources/views/flights/index.php).
-        $view     = $this->request->get('view', 'list') === 'days' ? 'days' : 'list';
+        // ИЗМЕНЕНО (23.11.2026, раунд 203, по прямому указанию пользователя —
+        // "добавить ещё варианты как выбор" к уже реализованному в раунде
+        // 202 аккордеону "По дням"): помимо 'list' и 'days' добавлены ещё
+        // два визуализированных ранее варианта: 'grouped' (Вариант 1 —
+        // плоский список с заголовками-разделителями по датам, пагинация
+        // как и раньше считает рейсы, а не дни — поэтому день иногда может
+        // быть разрезан между страницами, это явно показывается) и
+        // 'calendar' (Вариант 3 — один день на экран, навигация ‹ день ›).
+        $view = $this->request->get('view', 'list');
+        if (!in_array($view, ['days', 'grouped', 'calendar'], true)) {
+            $view = 'list';
+        }
         $airlines = $this->airlineModel->getAllActive();
 
         if ($view === 'days') {
@@ -145,6 +156,133 @@ class FlightController extends Controller
                 'airlines'        => $airlines,
                 'filters'         => $filters,
                 'pagination'      => paginate($totalDates, $daysPerPage, $page),
+            ]);
+            return;
+        }
+
+        // ДОБАВЛЕНО (23.11.2026, раунд 203): режим "Группировка" (Вариант 1) --
+        // та же постраничная навигация по количеству рейсов, что и у
+        // обычного "Списка" (20 рейсов на страницу), но отсортировано по
+        // дате рейса (а не f.id DESC) и в шаблоне рейсы визуально разбиты
+        // на группы по дате. Та же логика анкоринга на "сегодня" по
+        // умолчанию, что и у "По дням" выше -- только единица измерения
+        // анкера здесь не дни, а строки (рейсы), поэтому используется
+        // countFiltered(), а не countFilteredDistinctDates().
+        if ($view === 'grouped') {
+            $perPage = 20;
+
+            $explicitPage = $this->request->get('page', null);
+            if ($explicitPage === null) {
+                $todayStr      = date('Y-m-d');
+                $rowsUpToToday = $this->flightModel->countFiltered(
+                    array_merge($filters, ['date_to' => $todayStr])
+                );
+                $anchorIndex = max(0, $rowsUpToToday - 1);
+                $page        = intdiv($anchorIndex, $perPage) + 1;
+            } else {
+                $page = max(1, (int)$explicitPage);
+            }
+
+            $offset = ($page - 1) * $perPage;
+
+            $flights = $this->flightModel->getFilteredOrderedByDate($filters, $perPage, $offset);
+            $total   = $this->flightModel->countFiltered($filters);
+
+            // Полное (по всем страницам) и показанное на этой странице
+            // количество рейсов по каждой встретившейся здесь дате -- если
+            // полное больше показанного, день разрезан границей страницы,
+            // и это явно показывается (см. Вариант 1 в визуализации).
+            $datesOnPage  = array_values(array_unique(array_column($flights, 'flight_date')));
+            $countPerDate = $this->flightModel->countPerDateForDates($filters, $datesOnPage);
+            $shownPerDate = array_count_values(array_column($flights, 'flight_date'));
+
+            $today    = date('Y-m-d');
+            $tomorrow = date('Y-m-d', strtotime($today . ' +1 day'));
+
+            $rows     = [];
+            $prevDate = null;
+            foreach ($flights as $f) {
+                $d = $f['flight_date'];
+                if ($d !== $prevDate) {
+                    $label = $d === $today
+                        ? 'Сегодня, ' . format_date($d)
+                        : ($d === $tomorrow ? 'Завтра, ' . format_date($d) : format_date($d));
+                    $full       = $countPerDate[$d] ?? ($shownPerDate[$d] ?? 0);
+                    $shown      = $shownPerDate[$d] ?? 0;
+                    $countLabel = $full > $shown
+                        ? $shown . ' из ' . $full . ' рейсов'
+                        : $full . ' ' . ($full === 1 ? 'рейс' : 'рейсов');
+                    $rows[] = ['isGroup' => true, 'label' => $label, 'count' => $countLabel];
+                    $prevDate = $d;
+                }
+                $rows[] = ['isFlight' => true, 'f' => $f];
+            }
+
+            // Последняя дата на странице может быть обрезана границей
+            // страницы -- если так, добавляем предупреждение-"призрак" в
+            // конец списка (см. Вариант 1).
+            if ($prevDate !== null) {
+                $full  = $countPerDate[$prevDate] ?? 0;
+                $shown = $shownPerDate[$prevDate] ?? 0;
+                if ($full > $shown) {
+                    $rows[] = [
+                        'isGhost' => true,
+                        'label'   => '⋯ ещё ' . ($full - $shown) . ' рейс(ов) за '
+                            . format_date($prevDate) . ' — на следующей странице',
+                    ];
+                }
+            }
+
+            $this->render('flights/index', [
+                'title'      => 'Flights',
+                'mode'       => 'grouped',
+                'rows'       => $rows,
+                'airlines'   => $airlines,
+                'filters'    => $filters,
+                'pagination' => paginate($total, $perPage, $page),
+            ]);
+            return;
+        }
+
+        // ДОБАВЛЕНО (23.11.2026, раунд 203): режим "Календарь" (Вариант 3) --
+        // ровно один день на экран (без построчной пагинации -- всё, что
+        // попадает под фильтры на эту дату, показано целиком), навигация
+        // ‹ день / день › и быстрые переходы "Сегодня"/"Завтра"/
+        // "Послезавтра". Переиспользует getFilteredForDates() с массивом
+        // из одной даты -- отдельный SQL-метод здесь не нужен.
+        if ($view === 'calendar') {
+            $todayStr     = date('Y-m-d');
+            $selectedDate = $this->request->get('date', $todayStr);
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$selectedDate)) {
+                $selectedDate = $todayStr;
+            }
+
+            $flights = $this->flightModel->getFilteredForDates($filters, [$selectedDate]);
+
+            $tomorrow = date('Y-m-d', strtotime($todayStr . ' +1 day'));
+            $dayAfter = date('Y-m-d', strtotime($todayStr . ' +2 day'));
+            $prevDate = date('Y-m-d', strtotime($selectedDate . ' -1 day'));
+            $nextDate = date('Y-m-d', strtotime($selectedDate . ' +1 day'));
+
+            $selectedLabel = $selectedDate === $todayStr
+                ? 'Сегодня, ' . format_date($selectedDate)
+                : ($selectedDate === $tomorrow
+                    ? 'Завтра, ' . format_date($selectedDate)
+                    : format_date($selectedDate));
+
+            $this->render('flights/index', [
+                'title'         => 'Flights',
+                'mode'          => 'calendar',
+                'flights'       => $flights,
+                'selectedDate'  => $selectedDate,
+                'selectedLabel' => $selectedLabel,
+                'prevDate'      => $prevDate,
+                'nextDate'      => $nextDate,
+                'todayStr'      => $todayStr,
+                'tomorrowStr'   => $tomorrow,
+                'dayAfterStr'   => $dayAfter,
+                'airlines'      => $airlines,
+                'filters'       => $filters,
             ]);
             return;
         }
