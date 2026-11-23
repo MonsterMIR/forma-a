@@ -23,13 +23,36 @@
  * _row.php/_head.php — используются во всех режимах без дублирования.
  */
 ?>
+<?php
+// ДОБАВЛЕНО (23.11.2026, раунд 207, по прямому указанию пользователя —
+// "фрейм фильтра сделай как бы убирающийся... нажимает на фильтр и
+// появляется фильтр"): панель фильтров сворачивается в Bootstrap
+// collapse (тот же bootstrap.bundle.min.js, что и аккордеон "По дням" --
+// см. докблок наверху этого файла -- без единой строчки собственного
+// JS). По умолчанию панель СВЁРНУТА, но если хоть один фильтр уже
+// применён (например, после перехода по ссылке с ?search=... или после
+// самого поиска) -- остаётся/открывается РАЗВёРНУТОЙ, чтобы не прятать
+// от пользователя то, что он только что искал.
+$hasActiveFlightFilters = count(array_filter($filters)) > 0;
+?>
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="mb-0"><i class="bi bi-airplane"></i> <?= __('FLIGHTS_TITLE') ?></h2>
-    <?php if (has_role(['admin', 'cok'])): ?>
-    <a href="/flights/create" class="btn btn-primary"><i class="bi bi-plus-lg"></i> <?= __('FLIGHTS_CREATE') ?></a>
-    <?php endif; ?>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-outline-secondary position-relative"
+                data-bs-toggle="collapse" data-bs-target="#flightsFilterPanel"
+                aria-expanded="<?= $hasActiveFlightFilters ? 'true' : 'false' ?>" aria-controls="flightsFilterPanel">
+            <i class="bi bi-funnel"></i> Фильтры
+            <?php if ($hasActiveFlightFilters): ?>
+            <span class="badge rounded-pill bg-primary ms-1"><?= count(array_filter($filters)) ?></span>
+            <?php endif; ?>
+        </button>
+        <?php if (has_role(['admin', 'cok'])): ?>
+        <a href="/flights/create" class="btn btn-primary"><i class="bi bi-plus-lg"></i> <?= __('FLIGHTS_CREATE') ?></a>
+        <?php endif; ?>
+    </div>
 </div>
 
+<div class="collapse<?= $hasActiveFlightFilters ? ' show' : '' ?>" id="flightsFilterPanel">
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end">
@@ -89,6 +112,7 @@
             </div>
         </form>
     </div>
+</div>
 </div>
 
 <?php
