@@ -135,6 +135,143 @@ class Flight extends Model
         return (int)$stmt->fetchColumn();
     }
 
+    /**
+     * ДОБАВЛЕНО (23.11.2026, раунд 202, по прямому указанию пользователя —
+     * список рейсов "по дням", аккордеон, раскрыт только текущий день,
+     * выбор между "Список"/"По дням" на экране /flights): список различных
+     * дат (f.flight_date) под те же фильтры, что и getFiltered()/
+     * countFiltered() выше -- но именно дат, не рейсов, чтобы пагинация
+     * резала список целыми днями и ни один день не попадал разрезанным на
+     * две страницы (в отличие от getFiltered(), которая режет по
+     * количеству рейсов -- см. Вариант 1 в визуализации, где из-за этого
+     * день мог "переехать" на следующую страницу). WHERE-условия намеренно
+     * продублированы в buildFlightsWhere() ниже, а не выделены из
+     * getFiltered()/countFiltered() -- те два метода боевые, годами
+     * отлаженные, трогать их ради рефакторинга не стоило риска; здесь --
+     * отдельный узкий путь только для нового режима "По дням".
+     */
+    public function getFilteredDistinctDates(array $filters = [], int $limit = 7, int $offset = 0): array
+    {
+        [$whereStr, $params] = $this->buildFlightsWhere($filters);
+
+        $stmt = $this->query(
+            "SELECT DISTINCT f.flight_date
+             FROM `flights` f
+             JOIN `airlines` al ON al.id = f.airline_id
+             WHERE {$whereStr}
+             ORDER BY f.flight_date ASC
+             LIMIT {$limit} OFFSET {$offset}",
+            $params
+        );
+        return array_column($stmt->fetchAll(), 'flight_date');
+    }
+
+    public function countFilteredDistinctDates(array $filters = []): int
+    {
+        [$whereStr, $params] = $this->buildFlightsWhere($filters);
+
+        $stmt = $this->query(
+            "SELECT COUNT(DISTINCT f.flight_date)
+             FROM `flights` f
+             JOIN `airlines` al ON al.id = f.airline_id
+             WHERE {$whereStr}",
+            $params
+        );
+        return (int)$stmt->fetchColumn();
+    }
+
+    /**
+     * Те же рейсы и те же колонки, что и getFiltered() (включая act_id/
+     * act_status/manifest_status -- см. комментарии раунда 37/153 там же),
+     * но без LIMIT/OFFSET по количеству рейсов -- вместо этого жёстко
+     * ограничено списком конкретных дат (результат
+     * getFilteredDistinctDates() для текущей страницы режима "По дням") и
+     * отсортировано по дате/времени рейса, а не по f.id DESC (см. раунд 36
+     * -- та сортировка сделана по прямой просьбе пользователя специально
+     * для обычного плоского списка "Список", этот новый путь её не
+     * меняет и с ней никак не связан).
+     */
+    public function getFilteredForDates(array $filters, array $dates): array
+    {
+        if (empty($dates)) {
+            return [];
+        }
+
+        [$whereStr, $params] = $this->buildFlightsWhere($filters);
+
+        $placeholders = implode(',', array_fill(0, count($dates), '?'));
+        $params       = array_merge($params, $dates);
+
+        $stmt = $this->query(
+            "SELECT f.*,
+                    al.name AS airline_name, al.iata_code AS airline_iata,
+                    oa.name AS origin_name, oa.iata_code AS origin_iata,
+                    da.name AS destination_name, da.iata_code AS destination_iata,
+                    a.id AS act_id, a.act_number AS act_number, a.number_finalized AS act_number_finalized,
+                    a.status AS act_status,
+                    (SELECT pm.status FROM passenger_manifests pm
+                      WHERE pm.flight_id = f.id AND pm.manifest_type = 'final'
+                      ORDER BY pm.created_at DESC LIMIT 1) AS manifest_status
+             FROM `flights` f
+             JOIN `airlines` al ON al.id = f.airline_id
+             LEFT JOIN `airports` oa ON oa.id = f.origin_airport_id
+             LEFT JOIN `airports` da ON da.id = f.destination_airport_id
+             LEFT JOIN `acts` a ON a.flight_id = f.id
+             WHERE {$whereStr} AND f.flight_date IN ({$placeholders})
+             ORDER BY f.flight_date ASC, COALESCE(f.scheduled_time, '00:00:00') ASC, f.id ASC",
+            $params
+        );
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Общие WHERE-условия для нового режима "По дням"
+     * (getFilteredDistinctDates()/countFilteredDistinctDates()/
+     * getFilteredForDates() выше) -- те же поля фильтра, что и в
+     * getFiltered()/countFiltered(), просто вынесены в одно место, т.к.
+     * используются тремя новыми методами сразу (в отличие от двух старых
+     * методов, которые сознательно не трогаем -- см. комментарий выше).
+     */
+    private function buildFlightsWhere(array $filters): array
+    {
+        $where  = ['1=1'];
+        $params = [];
+
+        if (!empty($filters['search'])) {
+            $where[]  = "(f.flight_number LIKE ? OR al.name LIKE ?)";
+            $s        = '%' . $filters['search'] . '%';
+            $params[] = $s;
+            $params[] = $s;
+        }
+
+        if (!empty($filters['airline_id'])) {
+            $where[]  = "f.airline_id = ?";
+            $params[] = (int)$filters['airline_id'];
+        }
+
+        if (!empty($filters['route_type'])) {
+            $where[]  = "f.route_type = ?";
+            $params[] = $filters['route_type'];
+        }
+
+        if (!empty($filters['operation_type'])) {
+            $where[]  = "f.operation_type = ?";
+            $params[] = $filters['operation_type'];
+        }
+
+        if (!empty($filters['date_from'])) {
+            $where[]  = "f.flight_date >= ?";
+            $params[] = $filters['date_from'];
+        }
+
+        if (!empty($filters['date_to'])) {
+            $where[]  = "f.flight_date <= ?";
+            $params[] = $filters['date_to'];
+        }
+
+        return [implode(' AND ', $where), $params];
+    }
+
     public function findWithDetails(int $id): ?array
     {
         $stmt = $this->query(

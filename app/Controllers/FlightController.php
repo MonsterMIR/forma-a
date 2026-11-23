@@ -67,16 +67,98 @@ class FlightController extends Controller
             'date_to'        => $this->request->get('date_to', ''),
         ];
 
+        // ДОБАВЛЕНО (23.11.2026, раунд 202, по прямому указанию пользователя):
+        // переключатель вида списка рейсов -- "Список" (ветка ниже дословно
+        // как было, включая сортировку f.id DESC из раунда 36 -- та сделана
+        // по прежней прямой просьбе пользователя специально для этого
+        // режима, не трогаем) или "По дням" (новый режим: группировка по
+        // дате рейса в аккордеон, раскрыт только актуальный день,
+        // пагинация режет список целыми днями, а не количеством рейсов --
+        // см. App\Models\Flight::getFilteredDistinctDates()/getFilteredForDates()
+        // и resources/views/flights/index.php).
+        $view     = $this->request->get('view', 'list') === 'days' ? 'days' : 'list';
+        $airlines = $this->airlineModel->getAllActive();
+
+        if ($view === 'days') {
+            $daysPerPage = 7;
+
+            // ДОБАВЛЕНО (23.11.2026, раунд 202, по факту проверки): без этого
+            // первый заход в "По дням" (без явного клика по пагинации, т.е.
+            // ?page= в запросе ещё нет) всегда открывал страницу 1 -- а это
+            // САМЫЕ СТАРЫЕ даты в базе (тестовые рейсы за октябрь), а не
+            // сегодняшний день. Пользователь ожидает увидеть актуальные
+            // рейсы сразу, как на дашборде супервайзера (раунд 155), а не
+            // архив многомесячной давности. Если ?page= в запросе уже есть
+            // (человек реально кликнул "следующая страница"/пришёл по
+            // ссылке на конкретную страницу) -- используем её как есть и
+            // ничего не подменяем.
+            $explicitPage = $this->request->get('page', null);
+            if ($explicitPage === null) {
+                $todayStr       = date('Y-m-d');
+                $datesUpToToday = $this->flightModel->countFilteredDistinctDates(
+                    array_merge($filters, ['date_to' => $todayStr])
+                );
+                $anchorIndex = max(0, $datesUpToToday - 1);
+                $page        = intdiv($anchorIndex, $daysPerPage) + 1;
+            } else {
+                $page = max(1, (int)$explicitPage);
+            }
+
+            $offset = ($page - 1) * $daysPerPage;
+
+            $totalDates = $this->flightModel->countFilteredDistinctDates($filters);
+            $dates      = $this->flightModel->getFilteredDistinctDates($filters, $daysPerPage, $offset);
+            $flights    = $this->flightModel->getFilteredForDates($filters, $dates);
+
+            // Группируем по дате; $groups сперва заполняется пустыми
+            // массивами в порядке $dates (а не порядке появления в $flights),
+            // чтобы порядок дней на странице совпадал с порядком пагинации
+            // даже если для какой-то даты рейсов почему-то не найдётся.
+            $groups = [];
+            foreach ($dates as $d) {
+                $groups[$d] = [];
+            }
+            foreach ($flights as $f) {
+                $groups[$f['flight_date']][] = $f;
+            }
+
+            $today           = date('Y-m-d');
+            $defaultOpenDate = in_array($today, $dates, true) ? $today : ($dates[0] ?? null);
+
+            $this->render('flights/index', [
+                'title'           => 'Flights',
+                // ИЗМЕНЕНО (23.11.2026, раунд 202, по факту обнаруженного
+                // бага при проверке): ключ данных назывался 'view' и
+                // совпадал с именем параметра $view самого метода
+                // View::render(string $view, array $data) -- EXTR_SKIP в
+                // этом методе из-за этого молча НЕ подставлял наше
+                // значение (локальная переменная с этим именем уже
+                // существовала -- это путь шаблона 'flights/index', а не
+                // режим отображения). Шаблон при этом тихо уходил в ветку
+                // "Список", даже когда запрошен ?view=days. Переименовано
+                // в 'mode', чтобы не пересекаться с внутренними именами
+                // View::render().
+                'mode'            => 'days',
+                'groups'          => $groups,
+                'today'           => $today,
+                'defaultOpenDate' => $defaultOpenDate,
+                'airlines'        => $airlines,
+                'filters'         => $filters,
+                'pagination'      => paginate($totalDates, $daysPerPage, $page),
+            ]);
+            return;
+        }
+
         $page    = max(1, (int)$this->request->get('page', 1));
         $perPage = 20;
         $offset  = ($page - 1) * $perPage;
 
-        $flights  = $this->flightModel->getFiltered($filters, $perPage, $offset);
-        $total    = $this->flightModel->countFiltered($filters);
-        $airlines = $this->airlineModel->getAllActive();
+        $flights = $this->flightModel->getFiltered($filters, $perPage, $offset);
+        $total   = $this->flightModel->countFiltered($filters);
 
         $this->render('flights/index', [
             'title'      => 'Flights',
+            'mode'       => 'list',
             'flights'    => $flights,
             'airlines'   => $airlines,
             'filters'    => $filters,

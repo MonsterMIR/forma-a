@@ -1,3 +1,23 @@
+<?php
+/**
+ * ДОБАВЛЕНО (23.11.2026, раунд 202, по прямому указанию пользователя —
+ * жалоба на то, что рейсы в списке "не по порядку" по датам, затем
+ * визуализация 4 вариантов и выбор пользователя "аккордеон + переключатель
+ * видов"): страница теперь поддерживает два режима ($mode, см.
+ * FlightController::index()):
+ *   - 'list' — прежний плоский список без единого изменения в самой
+ *     разметке строк/колонок (сортировка f.id DESC осталась как есть,
+ *     см. раунд 36 — та сортировка это была прямая прошлая просьба
+ *     пользователя, её никто не отменял);
+ *   - 'days' — новый режим: рейсы сгруппированы по дате в Bootstrap-
+ *     аккордеон (accordion, data-bs-parent — раскрыт всегда ровно один
+ *     день, встроенное поведение Bootstrap 5, без единой строчки
+ *     собственного JS), по умолчанию открыт день = сегодня (или первый
+ *     день страницы, если сегодняшнего дня нет среди найденных).
+ * Разметка одной строки таблицы и шапки таблицы вынесены в partials
+ * _row.php/_head.php — используются в обоих режимах без дублирования.
+ */
+?>
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="mb-0"><i class="bi bi-airplane"></i> <?= __('FLIGHTS_TITLE') ?></h2>
     <?php if (has_role(['admin', 'cok'])): ?>
@@ -8,6 +28,12 @@
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end">
+            <!-- ДОБАВЛЕНО (23.11.2026, раунд 202): без этого скрытого поля
+                 применение/сброс фильтров внутри строки GET-формы молча
+                 сбрасывало бы ?view=days обратно на 'list' (в форме нет
+                 поля view) — пользователь оставался бы в режиме "По дням",
+                 а после поиска неожиданно попадал бы обратно в "Список". -->
+            <input type="hidden" name="view" value="<?= e($mode) ?>">
             <div class="col-md-3">
                 <label class="form-label small fw-semibold"><?= __('COMMON_SEARCH') ?></label>
                 <input type="text" name="search" class="form-control form-control-sm"
@@ -54,195 +80,128 @@
             </div>
             <div class="col-auto d-flex gap-2 mt-2">
                 <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i> <?= __('COMMON_SEARCH') ?></button>
-                <a href="/flights" class="btn btn-sm btn-outline-secondary"><?= __('COMMON_RESET') ?></a>
+                <a href="/flights<?= $mode === 'days' ? '?view=days' : '' ?>" class="btn btn-sm btn-outline-secondary"><?= __('COMMON_RESET') ?></a>
             </div>
         </form>
     </div>
 </div>
 
-<div class="card border-0 shadow-sm">
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th class="text-nowrap" style="width:1%">#</th>
-                        <th class="text-nowrap" style="width:1%"><?= __('ACTS_FLIGHT') ?></th>
-                        <!-- ИЗМЕНЕНО (21.11.2026, раунд 196, по прямому указанию
-                             пользователя): колонке с датой рейса и датой создания
-                             отдан фиксированный процент ширины вместо width:1% --
-                             иначе из-за двух строк текста ("Создан: ...") колонка
-                             сжималась до минимума и текст ломался на несколько
-                             строк сильнее, чем нужно. -->
-                        <th class="text-nowrap" style="width:13%"><?= __('COMMON_DATE') ?></th>
-                        <th><?= __('FLIGHTS_AIRLINE') ?></th>
-                        <th><?= __('FLIGHTS_ROUTE_TYPE_COL') ?></th>
-                        <th><?= __('FILES_OP_TYPE') ?></th>
-                        <!-- ИЗМЕНЕНО (05.11.2026, раунд 153, по прямому указанию пользователя):
-                             колонки "Откуда"/"Куда" объединены в одну "Маршрут" —
-                             аэропорт вылета и аэропорт прилёта через стрелку, в
-                             естественном порядке origin -> destination (для прилёта
-                             аэропорт TVT стоит вторым, для вылета — первым, т.к. так
-                             уже устроены origin_airport_id/destination_airport_id). -->
-                        <!-- ИЗМЕНЕНО (21.11.2026, раунд 196, по прямому указанию
-                             пользователя): колонка "Маршрут" не имела width:1%,
-                             как соседние компактные колонки, поэтому растягивалась
-                             вместе с гибкими колонками (Авиакомпания и т.п.) и после
-                             коротких кодов аэропортов оставалась большая пустая
-                             область. Текст в ячейке и так не переносится
-                             (class="text-nowrap" на <td> уже стоит), поэтому колонке
-                             можно отдать только необходимый минимум ширины. -->
-                        <th class="text-nowrap" style="width:1%">Маршрут</th>
-                        <th><?= __('FLIGHTS_AIRCRAFT_TYPE') ?></th>
-                        <!-- ДОБАВЛЕНО (11.09.2026, раунд 37): статус акта по рейсу -->
-                        <th>Акт</th>
-                        <!-- ДОБАВЛЕНО (05.11.2026, раунд 153, по прямому указанию пользователя):
-                             статус манифеста по рейсу — та же логика, что и на
-                             дашборде супервайзера (round128). -->
-                        <th>Манифест</th>
-                        <th><?= __('COMMON_ACTIONS') ?></th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php if (empty($flights)): ?>
-                    <tr><td colspan="11" class="text-center text-muted py-4"><?= __('FLIGHTS_NO_DATA') ?></td></tr>
-                <?php else: ?>
-                    <?php foreach ($flights as $f): ?>
-                    <?php /* ДОБАВЛЕНО (27.10.2026, раунд 129): отменённый рейс
-                             (flights.status='cancelled') визуально приглушён —
-                             виден в истории, но явно не "обычный актуальный". */ ?>
-                    <tr<?= (($f['status'] ?? 'active') === 'cancelled') ? ' class="opacity-75"' : '' ?>>
-                        <td class="text-muted small"><?= (int)$f['id'] ?></td>
-                        <td>
-                            <a href="/flights/<?= (int)$f['id'] ?>" class="text-decoration-none fw-semibold">
-                                <?= e($f['airline_iata'] ?? '') ?>-<?= e($f['flight_number']) ?>
-                            </a>
-                            <?php if (($f['status'] ?? 'active') === 'cancelled'): ?>
-                            <span class="badge bg-dark" title="<?= e($f['cancellation_reason'] ?? '') ?>">
-                                <i class="bi bi-slash-circle"></i> Отменён
-                            </span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?= format_date($f['flight_date']) ?>
-                            <?php /* ДОБАВЛЕНО (11.09.2026, раунд 37): плановое время
-                                     рейса (STD/STA) — раньше в списке была только дата */ ?>
-                            <?php if (!empty($f['scheduled_time'])): ?>
-                            <br><span class="text-muted small"><?= e(substr($f['scheduled_time'], 0, 5)) ?></span>
-                            <?php endif; ?>
-                            <?php /* ДОБАВЛЕНО (18.11.2026, раунд 179, по прямому
-                                     указанию пользователя): дата и время создания
-                                     самого рейса в системе (flights.created_at) —
-                                     отдельно от даты/времени самого рейса выше. */ ?>
-                            <?php if (!empty($f['created_at'])): ?>
-                            <br><span class="text-muted" style="font-size:0.7rem">Создан: <?= e(format_datetime($f['created_at'])) ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php /* ИСПРАВЛЕНО (10.09.2026, раунд 36): в этой ячейке
-                                     по ошибке выводился маршрут (Откуда→Куда), дублируя
-                                     колонки "Откуда"/"Куда" ниже, а название авиакомпании
-                                     пряталось мелким текстом в колонке "Рейс". Теперь здесь
-                                     выводится сама авиакомпания, как и написано в заголовке. */ ?>
-                            <?= e($f['airline_name']) ?>
-                            <?php if (!empty($f['airline_iata'])): ?>
-                            <span class="text-muted">(<?= e($f['airline_iata']) ?>)</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($f['route_type'] === 'domestic'): ?>
-                                <span class="badge bg-info text-dark"><?= __('FLIGHTS_DOMESTIC') ?></span>
-                            <?php else: ?>
-                                <span class="badge bg-primary"><?= __('FLIGHTS_INTERNATIONAL') ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($f['operation_type'] === 'arrival'): ?>
-                                <span class="badge bg-success"><?= __('FLIGHTS_ARRIVAL') ?></span>
-                            <?php else: ?>
-                                <span class="badge bg-warning text-dark"><?= __('FLIGHTS_DEPARTURE') ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td class="text-nowrap">
-                            <?php /* ИЗМЕНЕНО (05.11.2026, раунд 153, по прямому указанию
-                                     пользователя): "Откуда"/"Куда" объединены в одну колонку
-                                     "Маршрут" — ISL&nbsp;&rarr;&nbsp;TVT при прилёте,
-                                     TVT&nbsp;&rarr;&nbsp;BED при вылете (порядок как
-                                     есть в данных: origin -> destination). */ ?>
-                            <?= e($f['origin_iata'] ?? $f['origin_name'] ?? '—') ?>
-                            <i class="bi bi-arrow-right text-muted small"></i>
-                            <?= e($f['destination_iata'] ?? $f['destination_name'] ?? '—') ?>
-                        </td>
-                        <td class="small text-muted"><?= e($f['aircraft_type'] ?? '—') ?></td>
-                        <td>
-                            <?php /* ДОБАВЛЕНО (11.09.2026, раунд 37): статус акта по
-                                     рейсу — нет акта / предварительный (черновик, ещё не
-                                     утверждён ЦОК) / утверждён / экспортирован / отменён.
-                                     "Предварительный" здесь — это status='draft', вне
-                                     зависимости от того, финализирован ли уже номер акта
-                                     (см. раунд 35, acts.number_finalized) — с точки зрения
-                                     ЦОК это всё ещё черновик, пока сам не нажал "Подтвердить". */ ?>
-                            <?php if (empty($f['act_id'])): ?>
-                                <span class="badge bg-secondary">Нет акта</span>
-                            <?php else: ?>
-                                <?php
-                                    $actBadgeClass = match($f['act_status']) {
-                                        'draft'     => 'bg-warning text-dark',
-                                        'approved'  => 'bg-success',
-                                        'exported'  => 'bg-primary',
-                                        'cancelled' => 'bg-danger',
-                                        default     => 'bg-secondary',
-                                    };
-                                    $actStatusLabel = match($f['act_status']) {
-                                        'draft'     => 'Предварительный',
-                                        'approved'  => 'Утверждён',
-                                        'exported'  => 'Экспортирован',
-                                        'cancelled' => 'Отменён',
-                                        default     => e($f['act_status']),
-                                    };
-                                    $actNumberLabel = !empty($f['act_number_finalized'])
-                                        ? e($f['act_number'])
-                                        : 'ПРЕДВАРИТЕЛЬНО';
-                                ?>
-                                <a href="/acts/<?= (int)$f['act_id'] ?>" class="badge text-decoration-none <?= $actBadgeClass ?>">
-                                    <?= $actStatusLabel ?>
-                                </a>
-                                <div class="text-muted" style="font-size:0.7rem"><?= $actNumberLabel ?></div>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php /* ДОБАВЛЕНО (05.11.2026, раунд 153, по прямому указанию
-                                     пользователя): статус манифеста по рейсу, та же
-                                     трёхцветная логика, что и на дашборде супервайзера
-                                     (round128) — зелёный/жёлтый/красный. */ ?>
-                            <?php
-                                $manifestStatus = $f['manifest_status'] ?? null;
-                                $manifestBadge  = match($manifestStatus) {
-                                    'submitted', 'accepted' => ['bg-success', 'Манифест подан'],
-                                    'draft'                 => ['bg-warning text-dark', 'Манифест заполняется'],
-                                    default                 => ['bg-danger', 'Манифест не подан'],
-                                };
-                            ?>
-                            <span class="badge <?= $manifestBadge[0] ?>"><?= $manifestBadge[1] ?></span>
-                        </td>
-                        <td>
-                            <div class="d-flex gap-1">
-                                <a href="/flights/<?= (int)$f['id'] ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
-                                <?php if (has_role(['admin', 'cok'])): ?>
-                                <a href="/flights/<?= (int)$f['id'] ?>/edit" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                                <?php endif; ?>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+<?php
+// ДОБАВЛЕНО (23.11.2026, раунд 202): переключатель режима отображения —
+// сохраняет все текущие фильтры из $_GET, меняет только view и сбрасывает
+// page (иначе "страница 3" в одном режиме могла бы не существовать в другом
+// — у них разный смысл: номер страницы рейсов vs. номер страницы дней).
+$viewLinkList = '?' . http_build_query(array_merge($_GET, ['view' => 'list', 'page' => 1]));
+$viewLinkDays = '?' . http_build_query(array_merge($_GET, ['view' => 'days', 'page' => 1]));
+?>
+<div class="btn-group mb-3" role="group" aria-label="Режим отображения списка рейсов">
+    <a href="<?= e($viewLinkList) ?>" class="btn btn-sm <?= $mode === 'list' ? 'btn-dark' : 'btn-outline-dark' ?>">
+        <i class="bi bi-list-ul"></i> Список
+    </a>
+    <a href="<?= e($viewLinkDays) ?>" class="btn btn-sm <?= $mode === 'days' ? 'btn-dark' : 'btn-outline-dark' ?>">
+        <i class="bi bi-calendar3"></i> По дням
+    </a>
+</div>
+
+<?php if ($mode === 'days'): ?>
+
+    <?php if (empty($groups)): ?>
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center text-muted py-4"><?= __('FLIGHTS_NO_DATA') ?></div>
     </div>
-    <?php if ($pagination['last_page'] > 1): ?>
-    <div class="card-footer bg-white">
-        <?php include BASE_PATH . '/resources/views/layouts/_pagination.php'; ?>
+    <?php else: ?>
+    <?php
+        // Те же метки "Сегодня"/"Завтра", что и на дашборде супервайзера —
+        // см. resources/views/service_orders/supervisor_dashboard.php, раунд 155.
+        // Здесь дополнительно есть "Вчера" (на дашборде супервайзера прошлых
+        // дней не бывает — там только актуальные/будущие рейсы).
+        $tomorrowDate  = date('Y-m-d', strtotime($today . ' +1 day'));
+        $yesterdayDate = date('Y-m-d', strtotime($today . ' -1 day'));
+    ?>
+    <div class="accordion" id="flightsAccordion">
+        <?php $gi = 0; foreach ($groups as $groupDate => $groupFlights): $gi++; ?>
+        <?php
+            if ($groupDate === $today) {
+                $groupLabel = 'Сегодня, ' . format_date($groupDate);
+            } elseif ($groupDate === $tomorrowDate) {
+                $groupLabel = 'Завтра, ' . format_date($groupDate);
+            } elseif ($groupDate === $yesterdayDate) {
+                $groupLabel = 'Вчера, ' . format_date($groupDate);
+            } else {
+                $groupLabel = format_date($groupDate);
+            }
+            $isOpen     = ($groupDate === $defaultOpenDate);
+            $collapseId = 'flightsDay' . $gi;
+        ?>
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <button class="accordion-button <?= $isOpen ? '' : 'collapsed' ?>" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#<?= $collapseId ?>"
+                        aria-expanded="<?= $isOpen ? 'true' : 'false' ?>" aria-controls="<?= $collapseId ?>">
+                    <span class="fw-semibold me-2"><?= e($groupLabel) ?></span>
+                    <span class="badge bg-secondary rounded-pill"><?= count($groupFlights) ?></span>
+                </button>
+            </h2>
+            <div id="<?= $collapseId ?>" class="accordion-collapse collapse <?= $isOpen ? 'show' : '' ?>"
+                 data-bs-parent="#flightsAccordion">
+                <div class="accordion-body p-0">
+                    <?php if (empty($groupFlights)): ?>
+                    <div class="text-center text-muted py-3"><?= __('FLIGHTS_NO_DATA') ?></div>
+                    <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light">
+                                <?php include BASE_PATH . '/resources/views/flights/_head.php'; ?>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($groupFlights as $f): ?>
+                                <?php include BASE_PATH . '/resources/views/flights/_row.php'; ?>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <?php endforeach; ?>
     </div>
     <?php endif; ?>
-</div>
+
+    <?php if ($pagination['last_page'] > 1): ?>
+    <div class="card border-0 shadow-sm mt-3">
+        <div class="card-body">
+            <?php include BASE_PATH . '/resources/views/layouts/_pagination.php'; ?>
+        </div>
+    </div>
+    <?php endif; ?>
+
+<?php else: ?>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <?php include BASE_PATH . '/resources/views/flights/_head.php'; ?>
+                    </thead>
+                    <tbody>
+                    <?php if (empty($flights)): ?>
+                        <tr><td colspan="11" class="text-center text-muted py-4"><?= __('FLIGHTS_NO_DATA') ?></td></tr>
+                    <?php else: ?>
+                        <?php foreach ($flights as $f): ?>
+                            <?php include BASE_PATH . '/resources/views/flights/_row.php'; ?>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php if ($pagination['last_page'] > 1): ?>
+        <div class="card-footer bg-white">
+            <?php include BASE_PATH . '/resources/views/layouts/_pagination.php'; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+
+<?php endif; ?>
