@@ -154,12 +154,20 @@ class Flight extends Model
     {
         [$whereStr, $params] = $this->buildFlightsWhere($filters);
 
+        // ИЗМЕНЕНО (23.11.2026, раунд 204, по жалобе пользователя: "новые в
+        // конце списка, а должно быть новые в начале" — на 8-9 странице из
+        // 9 оказывались актуальные даты, а на первой — самые старые
+        // тестовые рейсы за октябрь): было ORDER BY ASC (от старых к новым,
+        // страница 1 = самая старая история). Теперь DESC — страница 1
+        // показывает самые свежие/будущие даты, старая история уходит в
+        // конец пагинации, как и ожидает пользователь (аналогично тому, как
+        // "Список" уже показывает новое сверху — см. раунд 36).
         $stmt = $this->query(
             "SELECT DISTINCT f.flight_date
              FROM `flights` f
              JOIN `airlines` al ON al.id = f.airline_id
              WHERE {$whereStr}
-             ORDER BY f.flight_date ASC
+             ORDER BY f.flight_date DESC
              LIMIT {$limit} OFFSET {$offset}",
             $params
         );
@@ -256,7 +264,7 @@ class Flight extends Model
              LEFT JOIN `airports` da ON da.id = f.destination_airport_id
              LEFT JOIN `acts` a ON a.flight_id = f.id
              WHERE {$whereStr}
-             ORDER BY f.flight_date ASC, COALESCE(f.scheduled_time, '00:00:00') ASC, f.id ASC
+             ORDER BY f.flight_date DESC, COALESCE(f.scheduled_time, '00:00:00') ASC, f.id ASC
              LIMIT {$limit} OFFSET {$offset}",
             $params
         );

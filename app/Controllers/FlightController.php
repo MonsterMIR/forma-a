@@ -95,21 +95,32 @@ class FlightController extends Controller
 
             // ДОБАВЛЕНО (23.11.2026, раунд 202, по факту проверки): без этого
             // первый заход в "По дням" (без явного клика по пагинации, т.е.
-            // ?page= в запросе ещё нет) всегда открывал страницу 1 -- а это
-            // САМЫЕ СТАРЫЕ даты в базе (тестовые рейсы за октябрь), а не
+            // ?page= в запросе ещё нет) всегда открывал страницу 1 -- а не
             // сегодняшний день. Пользователь ожидает увидеть актуальные
-            // рейсы сразу, как на дашборде супервайзера (раунд 155), а не
-            // архив многомесячной давности. Если ?page= в запросе уже есть
-            // (человек реально кликнул "следующая страница"/пришёл по
-            // ссылке на конкретную страницу) -- используем её как есть и
-            // ничего не подменяем.
+            // рейсы сразу, как на дашборде супервайзера (раунд 155). Если
+            // ?page= в запросе уже есть (человек реально кликнул
+            // "следующая страница"/пришёл по ссылке на конкретную
+            // страницу) -- используем её как есть и ничего не подменяем.
+            //
+            // ИЗМЕНЕНО (23.11.2026, раунд 204, по жалобе пользователя:
+            // "новые в конце списка, а должно быть новые в начале" --
+            // актуальные даты оказывались на 8-й из 9 страниц, а самая
+            // старая история -- на первой): getFilteredDistinctDates()
+            // теперь сортирует по убыванию даты (DESC, см. Flight.php) --
+            // страница 1 это самые свежие/будущие даты, а не самые старые.
+            // Поэтому позиция "сегодня" в этом списке считается иначе:
+            // это уже не "сколько дат ДО сегодня включительно" (как было
+            // нужно при ASC), а "сколько дат ПОСЛЕ сегодня" (строго
+            // позже) -- именно столько элементов окажется ПЕРЕД сегодня
+            // в списке, отсортированном по убыванию.
             $explicitPage = $this->request->get('page', null);
             if ($explicitPage === null) {
                 $todayStr       = date('Y-m-d');
-                $datesUpToToday = $this->flightModel->countFilteredDistinctDates(
-                    array_merge($filters, ['date_to' => $todayStr])
+                $tomorrowStr    = date('Y-m-d', strtotime($todayStr . ' +1 day'));
+                $datesAfterToday = $this->flightModel->countFilteredDistinctDates(
+                    array_merge($filters, ['date_from' => $tomorrowStr])
                 );
-                $anchorIndex = max(0, $datesUpToToday - 1);
+                $anchorIndex = max(0, $datesAfterToday);
                 $page        = intdiv($anchorIndex, $daysPerPage) + 1;
             } else {
                 $page = max(1, (int)$explicitPage);
@@ -171,13 +182,18 @@ class FlightController extends Controller
         if ($view === 'grouped') {
             $perPage = 20;
 
+            // ИЗМЕНЕНО (23.11.2026, раунд 204): getFilteredOrderedByDate()
+            // теперь тоже сортирует по убыванию даты (DESC) -- см.
+            // комментарий у анкера режима "По дням" выше, здесь та же
+            // логика, только единица анкера -- строки (рейсы), а не дни.
             $explicitPage = $this->request->get('page', null);
             if ($explicitPage === null) {
-                $todayStr      = date('Y-m-d');
-                $rowsUpToToday = $this->flightModel->countFiltered(
-                    array_merge($filters, ['date_to' => $todayStr])
+                $todayStr        = date('Y-m-d');
+                $tomorrowStr     = date('Y-m-d', strtotime($todayStr . ' +1 day'));
+                $rowsAfterToday  = $this->flightModel->countFiltered(
+                    array_merge($filters, ['date_from' => $tomorrowStr])
                 );
-                $anchorIndex = max(0, $rowsUpToToday - 1);
+                $anchorIndex = max(0, $rowsAfterToday);
                 $page        = intdiv($anchorIndex, $perPage) + 1;
             } else {
                 $page = max(1, (int)$explicitPage);
