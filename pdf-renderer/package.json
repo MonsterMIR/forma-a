@@ -1,0 +1,9 @@
+{
+  "name": "forma-a-pdf-renderer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless-Chromium рендер акта Форма А в PDF (раунд 201) -- печатает HTML точно так же, как настоящий браузер по кнопке \"Печать\", вместо dompdf, для вложений в письмах.",
+  "dependencies": {
+    "puppeteer": "23.11.1"
+  }
+}

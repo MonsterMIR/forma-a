@@ -24,3 +24,8 @@ composer.phar
 .DS_Store
 *.swp
 *.swo
+
+# Headless-Chromium рендерер PDF (раунд 201) — node_modules (включая
+# бандлированный Chromium, ~250MB) ставится через npm install по
+# package-lock.json, как vendor/ через composer install.
+/pdf-renderer/node_modules/

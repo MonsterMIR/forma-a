@@ -33,21 +33,32 @@ use App\Core\Response;
  * ActService::sendApprovalCopyEmail()), сам сервис — просто механизм
  * "акт → PDF", применимый и на будущее к другим задачам, не только к
  * порталу представителя.
+ *
+ * ИЗМЕНЕНО (23.11.2026, раунд 201, по итогам разбора очередной жалобы
+ * пользователя "всё равно неправильно отражается"): пользователь прислал
+ * для сравнения файл, который назвал "оригиналом в системе" — при
+ * разборе выяснилось, что отдельного хранимого "оригинала" в системе НЕТ
+ * (нет ни такой колонки в acts, ни генерации PDF в Android-приложении
+ * супервайзера) — это тот же самый HTML (resources/views/acts/print.php,
+ * та же фраза "продолжение / continued"), просто открытый пользователем
+ * через кнопку "Печать" и сохранённый НАСТОЯЩИМ браузером, а не dompdf.
+ * Вместо очередного точечного патча под конкретную особенность dompdf,
+ * теперь по умолчанию используется headless Chromium (см.
+ * pdf-renderer/render.js, папка внутри public_html, рядом с app/) — тот же движок,
+ * что и у пользователя в браузере, воспроизводящий печать 1-в-1
+ * (правильные разрывы страниц, нет нужды в defaultMediaType/шрифтовых
+ * обходах). dompdf остаётся ниже как запасной вариант на случай, если
+ * Chromium на сервере недоступен или рендер не удался.
  */
 class ActPdfService
 {
     /**
      * Рендерит печатную форму акта и конвертирует в PDF.
-     * Возвращает байты PDF-файла или null, если dompdf не установлен,
-     * либо акт не найден.
+     * Возвращает байты PDF-файла или null, если акт не найден либо не
+     * удалось сгенерировать PDF ни одним из способов (Chromium и dompdf).
      */
     public function generate(int $actId): ?string
     {
-        if (!class_exists(\Dompdf\Dompdf::class)) {
-            error_log('ActPdfService::generate: dompdf/dompdf не установлен — выполните "composer require dompdf/dompdf" на сервере.');
-            return null;
-        }
-
         $html = $this->renderHtml($actId);
         if ($html === null) {
             return null;
@@ -67,8 +78,27 @@ class ActPdfService
         // data:-URI, читая файл напрямую с диска по той же логике, что и
         // ActSignatureController::viewSignature() -- никакого сетевого
         // доступа при этом так и не открываем, isRemoteEnabled остаётся
-        // false.
+        // false. Нужно это и для Chromium-пути ниже тоже: render.js
+        // получает уже самодостаточный HTML (page.setContent, без
+        // навигации и без сессии) -- так что инлайнинг картинок здесь
+        // общий для обоих способов рендера.
         $html = $this->inlineSignatureImages($html);
+
+        // ИЗМЕНЕНО (23.11.2026, раунд 201): основной путь -- headless
+        // Chromium, см. комментарий класса выше. При любой проблеме
+        // (скрипт отсутствует, Chromium не смог запуститься, таймаут и
+        // т.п.) generateViaChromium() возвращает null и ниже используется
+        // прежний dompdf-путь -- без изменений в поведении на этот случай.
+        $pdf = $this->generateViaChromium($html);
+        if ($pdf !== null) {
+            return $pdf;
+        }
+        error_log('ActPdfService::generate: Chromium-рендер недоступен или не удался, используется запасной вариант dompdf для act ' . $actId);
+
+        if (!class_exists(\Dompdf\Dompdf::class)) {
+            error_log('ActPdfService::generate: dompdf/dompdf не установлен — выполните "composer require dompdf/dompdf" на сервере.');
+            return null;
+        }
 
         // ИСПРАВЛЕНО (21.11.2026, раунд 195, по жалобе пользователя: PDF во
         // вложении письма пришёл со сплошными "?" вместо кириллицы): CSS
@@ -84,7 +114,7 @@ class ActPdfService
         // что пользователь видит в браузере по кнопке "Печать"
         // (ActController::printForm()/renderPrintHtml()), не затронуто --
         // там этот блок не добавляется.
-        $html .= '<style>*, *::before, *::after { font-family: "DejaVu Sans", sans-serif !important; }</style>';
+        $dompdfHtml = $html . '<style>*, *::before, *::after { font-family: "DejaVu Sans", sans-serif !important; }</style>';
 
         try {
             $options = new \Dompdf\Options();
@@ -107,7 +137,7 @@ class ActPdfService
             $options->set('defaultMediaType', 'print');
 
             $dompdf = new \Dompdf\Dompdf($options);
-            $dompdf->loadHtml($html, 'UTF-8');
+            $dompdf->loadHtml($dompdfHtml, 'UTF-8');
             $dompdf->setPaper('A4', 'portrait');
             $dompdf->render();
 
@@ -162,5 +192,60 @@ class ActPdfService
             },
             $html
         ) ?? $html;
+    }
+
+    /**
+     * ДОБАВЛЕНО (23.11.2026, раунд 201): рендерит уже готовый самодостаточный
+     * HTML (подписи инлайнены вызывающим кодом в generate()) в PDF через
+     * headless Chromium -- см. комментарий класса и pdf-renderer/render.js.
+     * Возвращает null при любой проблеме (скрипт не найден, Chromium не
+     * смог запуститься, таймаут, пустой результат) -- вызывающий код
+     * (generate()) в этом случае откатывается на dompdf, поведение не
+     * ломается даже если на каком-то окружении Chromium недоступен.
+     */
+    private function generateViaChromium(string $html): ?string
+    {
+        $rendererDir = BASE_PATH . '/pdf-renderer';
+        $script = $rendererDir . '/render.js';
+        if (!is_file($script)) {
+            return null;
+        }
+
+        $tmpHtml = tempnam(sys_get_temp_dir(), 'formaa_pdf_html_');
+        $tmpPdf  = tempnam(sys_get_temp_dir(), 'formaa_pdf_out_');
+        if ($tmpHtml === false || $tmpPdf === false) {
+            return null;
+        }
+
+        try {
+            file_put_contents($tmpHtml, $html);
+
+            $cmd = sprintf(
+                'cd %s && timeout 30 node render.js %s %s 2>&1',
+                escapeshellarg($rendererDir),
+                escapeshellarg($tmpHtml),
+                escapeshellarg($tmpPdf)
+            );
+            exec($cmd, $outputLines, $exitCode);
+
+            if ($exitCode !== 0) {
+                error_log('ActPdfService::generateViaChromium: render.js завершился с кодом ' . $exitCode . ': ' . implode(' | ', $outputLines));
+                return null;
+            }
+
+            if (!is_file($tmpPdf) || filesize($tmpPdf) === 0) {
+                error_log('ActPdfService::generateViaChromium: выходной PDF пуст или не создан.');
+                return null;
+            }
+
+            $pdf = file_get_contents($tmpPdf);
+            return $pdf === false ? null : $pdf;
+        } catch (\Throwable $e) {
+            error_log('ActPdfService::generateViaChromium error: ' . $e->getMessage());
+            return null;
+        } finally {
+            @unlink($tmpHtml);
+            @unlink($tmpPdf);
+        }
     }
 }
