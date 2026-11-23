@@ -193,6 +193,42 @@ class FlightService
             }
         }
 
+        // ДОБАВЛЕНО (23.11.2026, раунд 206, по прямому указанию пользователя —
+        // "при создании что бы исключить человеческую ошибку, можем
+        // реализовать так что бы не смогли создать рейс на вылет если в
+        // истории борта нет последнего рейса на прилет, и обратно"):
+        // контроль альтернации прилёт/вылет — проверено на всей истории
+        // (107 бортов, 220 переходов между соседними рейсами одного борта):
+        // альтернация держится в 219 из 220 случаев (99.5%), единственное
+        // исключение — уже известный дубль рейса AXS4 (#12/#13, round92/112,
+        // см. findIdleDuplicate() выше). На создании — жёсткий блок, риск
+        // ложной блокировки практически нулевой; на редактировании (см.
+        // updateFlight() ниже) — только предупреждение, т.к. правка иногда
+        // и есть исправление именно такой ошибки. Первый рейс нового борта
+        // (истории ещё нет, findLastFlightBefore() вернёт null) — пропускаем
+        // всегда, это легитимно и для обычного борта (начинает с прилёта), и
+        // для "базирующегося" у нас борта (round154 — начинает с вылета,
+        // альтернация у него всё равно держится, просто с другой "фазы",
+        // см. claude/analysis-2026-11-23-round206-...).
+        if (!empty($insertData['aircraft_registration'])) {
+            $prevFlight = $this->flightModel->findLastFlightBefore(
+                $insertData['aircraft_registration'],
+                $insertData['flight_date'],
+                $insertData['scheduled_time'] ?? null
+            );
+            if ($prevFlight && $prevFlight['operation_type'] === $insertData['operation_type']) {
+                $newDirLabel  = $insertData['operation_type'] === 'arrival' ? 'прилёта' : 'вылета';
+                $prevDirLabel = $prevFlight['operation_type'] === 'arrival' ? 'прилёт' : 'вылет';
+                return ['success' => false, 'error' =>
+                    "У борта {$insertData['aircraft_registration']} предыдущий (хронологически) рейс — "
+                    . "тоже {$prevDirLabel}: №{$prevFlight['flight_number']} от {$prevFlight['flight_date']} "
+                    . "(ID {$prevFlight['id']}). Прилёт и вылет должны чередоваться — создать ещё один рейс "
+                    . "{$newDirLabel} подряд нельзя: похоже на ошибку в регистрации борта или в типе операции. "
+                    . "Если это ДЕЙСТВИТЕЛЬНО так и было — обратитесь к администратору."
+                ];
+            }
+        }
+
         // ДОБАВЛЕНО (19.11.2026, раунд 184, safeguard #2, по прямому
         // указанию пользователя после анализа инцидента LSK3533/RA73533 —
         // см. claude/analysis-2026-11-19-round183-lsk3533-root-cause-and-safeguards.md):
@@ -478,6 +514,36 @@ class FlightService
             $plannedConflict = $standService->findPlannedConflict($updateData, $id);
             if ($plannedConflict) {
                 $standWarning = $standService->describeConflict($plannedConflict);
+            }
+        }
+
+        // ДОБАВЛЕНО (23.11.2026, раунд 206) — см. комментарий в
+        // createFlight() выше (контроль альтернации прилёт/вылет). На
+        // редактировании НЕ блокируем (правка иногда и есть исправление
+        // именно такой ошибки — опечатались в регистрации/типе на создании,
+        // пришли чинить) — только предупреждаем, тем же способом, что и
+        // предупреждение о стоянке выше ($standWarning). Проверяем только
+        // если регистрация и/или тип операции реально ИЗМЕНИЛИСЬ этим
+        // сохранением — иначе обычное пересохранение рейса без правки этих
+        // полей не должно внезапно начать ругаться на давно существующую
+        // историю. exclude=$id — сам этот рейс не сравнивается сам с собой.
+        $regChangedForAlt = ($existing['aircraft_registration'] ?? null) !== ($updateData['aircraft_registration'] ?? null);
+        $opChangedForAlt  = ($existing['operation_type'] ?? null) !== ($updateData['operation_type'] ?? null);
+        if (($regChangedForAlt || $opChangedForAlt) && !empty($updateData['aircraft_registration'])) {
+            $prevFlightForAlt = $this->flightModel->findLastFlightBefore(
+                $updateData['aircraft_registration'],
+                $updateData['flight_date'],
+                $updateData['scheduled_time'] ?? null,
+                $id
+            );
+            if ($prevFlightForAlt && $prevFlightForAlt['operation_type'] === $updateData['operation_type']) {
+                $altDirLabel  = $updateData['operation_type'] === 'arrival' ? 'прилёта' : 'вылета';
+                $altPrevLabel = $prevFlightForAlt['operation_type'] === 'arrival' ? 'прилёт' : 'вылет';
+                $altWarning = "у борта {$updateData['aircraft_registration']} предыдущий (хронологически) рейс тоже "
+                    . "{$altPrevLabel} (№{$prevFlightForAlt['flight_number']} от {$prevFlightForAlt['flight_date']}, "
+                    . "ID {$prevFlightForAlt['id']}) — рейс {$altDirLabel} подряд необычен, прилёт/вылет обычно "
+                    . "чередуются; проверьте регистрацию борта и тип операции.";
+                $standWarning = $standWarning ? ($standWarning . ' ' . $altWarning) : $altWarning;
             }
         }
 

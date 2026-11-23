@@ -563,6 +563,51 @@ class Flight extends Model
     }
 
     /**
+     * ДОБАВЛЕНО (23.11.2026, раунд 206, по прямому указанию пользователя —
+     * контроль альтернации прилёт/вылет в истории борта при
+     * создании/редактировании рейса, см. FlightService::createFlight()/
+     * updateFlight() и claude/analysis-2026-11-23-round206-...): борт не
+     * должен иметь два рейса одного направления (прилёт/прилёт или
+     * вылет/вылет) подряд без противоположного между ними — обычно это
+     * значит, что в регистрации борта или в типе операции опечатка.
+     * Возвращает хронологически БЛИЖАЙШИЙ ПРЕДЫДУЩИЙ (по f.flight_date +
+     * f.scheduled_time, не отменённый) рейс этого борта — той же логикой
+     * сравнения по времени, что и findChronologicalLinkCandidates() выше,
+     * но без ограничения по operation_type (нужен просто последний рейс
+     * борта вообще, не следующий противоположного типа) и без LIMIT 20 —
+     * только один, ближайший. Если это вообще первый рейс борта в системе
+     * — возвращает null, и вызывающий код обязан пропустить проверку (это
+     * легитимно и для обычного борта, который начинает с прилёта, и для
+     * "базирующегося" у нас борта — round154 — который может официально
+     * начинать с вылета).
+     */
+    public function findLastFlightBefore(
+        string $registration,
+        string $flightDate,
+        ?string $scheduledTime,
+        ?int $excludeId = null
+    ): ?array {
+        $refTime = ($scheduledTime !== null && $scheduledTime !== '') ? $scheduledTime : '12:00:00';
+
+        $sql = "SELECT id, flight_number, flight_date, scheduled_time, operation_type
+                FROM `flights`
+                WHERE aircraft_registration = ?
+                  AND status != 'cancelled'
+                  AND TIMESTAMP(flight_date, COALESCE(scheduled_time, '12:00:00')) < TIMESTAMP(?, ?)";
+        $params = [$registration, $flightDate, $refTime];
+
+        if ($excludeId !== null) {
+            $sql .= " AND id != ?";
+            $params[] = $excludeId;
+        }
+
+        $sql .= " ORDER BY flight_date DESC, COALESCE(scheduled_time, '12:00:00') DESC, id DESC LIMIT 1";
+
+        $row = $this->query($sql, $params)->fetch();
+        return $row ?: null;
+    }
+
+    /**
      * ДОБАВЛЕНО (12.10.2026, раунд 69, по прямому указанию пользователя):
      * обнаружение "забытого" рейса того же борта и того же направления
      * (operation_type) — чтобы не допустить повторного создания рейса,
