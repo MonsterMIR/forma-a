@@ -53,6 +53,23 @@ class ActPdfService
             return null;
         }
 
+        // ДОБАВЛЕНО (23.11.2026, раунд 200, по жалобе пользователя: в PDF,
+        // присланном по почте, подписи супервайзера и представителя
+        // авиакомпании -- пустые ячейки, хотя в системе реально сохранены
+        // (acts.supervisor_signature_file_id / airline_rep_signature_file_id,
+        // те же PNG, что показывает сама печатная форма в браузере).
+        // Причина: вёрстка ссылается на них через
+        // /acts/signature/{id} -- маршрут за AuthMiddleware. У dompdf нет
+        // ни сессии пользователя, ни куки, да и isRemoteEnabled=false
+        // (осознанно, по соображениям безопасности) запрещает ЛЮБУЮ
+        // загрузку по HTTP(S), даже на свой же домен -- поэтому тег <img>
+        // молча не загружался. Инлайним эти две конкретные картинки как
+        // data:-URI, читая файл напрямую с диска по той же логике, что и
+        // ActSignatureController::viewSignature() -- никакого сетевого
+        // доступа при этом так и не открываем, isRemoteEnabled остаётся
+        // false.
+        $html = $this->inlineSignatureImages($html);
+
         // ИСПРАВЛЕНО (21.11.2026, раунд 195, по жалобе пользователя: PDF во
         // вложении письма пришёл со сплошными "?" вместо кириллицы): CSS
         // самой печатной формы (print.php) явно задаёт
@@ -112,5 +129,38 @@ class ActPdfService
     {
         $controller = new ActController(new Request(), new Response());
         return $controller->renderPrintHtml($actId);
+    }
+
+    /**
+     * ДОБАВЛЕНО (23.11.2026, раунд 200): заменяет <img src="/acts/signature/{id}">
+     * на data:-URI с содержимым файла, прочитанным напрямую с диска --
+     * см. комментарий в generate() выше. Тот же запрос, что и в
+     * ActSignatureController::viewSignature(), просто без HTTP.
+     */
+    private function inlineSignatureImages(string $html): string
+    {
+        return preg_replace_callback(
+            '#src="/acts/signature/(\d+)"#',
+            function (array $m): string {
+                $fileId = (int)$m[1];
+                $stmt = \App\Core\Database::getInstance()->prepare(
+                    "SELECT storage_path, mime_type FROM uploaded_files
+                     WHERE id = ? AND file_category = 'signature' AND upload_status = 'uploaded' LIMIT 1"
+                );
+                $stmt->execute([$fileId]);
+                $file = $stmt->fetch(\PDO::FETCH_ASSOC);
+                if (!$file) {
+                    return $m[0];
+                }
+                $config   = require BASE_PATH . '/config/app.php';
+                $fullPath = $config['upload']['storage_path'] . '/' . $file['storage_path'];
+                if (!is_file($fullPath)) {
+                    return $m[0];
+                }
+                $data = base64_encode((string)file_get_contents($fullPath));
+                return 'src="data:' . $file['mime_type'] . ';base64,' . $data . '"';
+            },
+            $html
+        ) ?? $html;
     }
 }
