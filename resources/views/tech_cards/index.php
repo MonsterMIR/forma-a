@@ -3,6 +3,31 @@
 </div>
 
 <!-- Фильтры -->
+<?php
+// ДОБАВЛЕНО (23.11.2026, раунд 208, по прямому указанию пользователя --
+// "сделай на всех страницах где есть фильтрация тоже самое" -- та же
+// сворачиваемая в Bootstrap collapse панель фильтров, что и на /flights
+// (round207), перенесена на все экраны со списком и фильтрами.
+// $hasActiveFilters считается универсально по $_GET (без привязки к
+// конкретным полям фильтра этой страницы, кроме служебного 'page') --
+// один и тот же приём работает одинаково на каждом экране и не требует
+// правок в контроллере.
+$__activeFilterParamstechCardsFilterPanel = array_filter(
+    array_diff_key($_GET, ['page' => null]),
+    fn($v) => $v !== '' && $v !== null
+);
+$hasActiveFilterstechCardsFilterPanel = count($__activeFilterParamstechCardsFilterPanel) > 0;
+?>
+<div class="mb-2">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse"
+            data-bs-target="#techCardsFilterPanel" aria-expanded="<?= $hasActiveFilterstechCardsFilterPanel ? 'true' : 'false' ?>" aria-controls="techCardsFilterPanel">
+        <i class="bi bi-funnel"></i> Фильтры
+        <?php if ($hasActiveFilterstechCardsFilterPanel): ?>
+        <span class="badge rounded-pill bg-primary ms-1"><?= count($__activeFilterParamstechCardsFilterPanel) ?></span>
+        <?php endif; ?>
+    </button>
+</div>
+<div class="collapse<?= $hasActiveFilterstechCardsFilterPanel ? ' show' : '' ?>" id="techCardsFilterPanel">
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end">
@@ -33,6 +58,7 @@
             </div>
         </form>
     </div>
+</div>
 </div>
 
 <div class="card border-0 shadow-sm">

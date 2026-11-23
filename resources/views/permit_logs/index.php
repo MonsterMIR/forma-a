@@ -7,6 +7,31 @@
     редактирования. Видно только администратору.
 </div>
 
+<?php
+// ДОБАВЛЕНО (23.11.2026, раунд 208, по прямому указанию пользователя --
+// "сделай на всех страницах где есть фильтрация тоже самое" -- та же
+// сворачиваемая в Bootstrap collapse панель фильтров, что и на /flights
+// (round207), перенесена на все экраны со списком и фильтрами.
+// $hasActiveFilters считается универсально по $_GET (без привязки к
+// конкретным полям фильтра этой страницы, кроме служебного 'page') --
+// один и тот же приём работает одинаково на каждом экране и не требует
+// правок в контроллере.
+$__activeFilterParamspermitLogsFilterPanel = array_filter(
+    array_diff_key($_GET, ['page' => null]),
+    fn($v) => $v !== '' && $v !== null
+);
+$hasActiveFilterspermitLogsFilterPanel = count($__activeFilterParamspermitLogsFilterPanel) > 0;
+?>
+<div class="mb-2">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse"
+            data-bs-target="#permitLogsFilterPanel" aria-expanded="<?= $hasActiveFilterspermitLogsFilterPanel ? 'true' : 'false' ?>" aria-controls="permitLogsFilterPanel">
+        <i class="bi bi-funnel"></i> Фильтры
+        <?php if ($hasActiveFilterspermitLogsFilterPanel): ?>
+        <span class="badge rounded-pill bg-primary ms-1"><?= count($__activeFilterParamspermitLogsFilterPanel) ?></span>
+        <?php endif; ?>
+    </button>
+</div>
+<div class="collapse<?= $hasActiveFilterspermitLogsFilterPanel ? ' show' : '' ?>" id="permitLogsFilterPanel">
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end">
@@ -32,6 +57,7 @@
             </div>
         </form>
     </div>
+</div>
 </div>
 
 <div class="card border-0 shadow-sm">

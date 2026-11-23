@@ -13,6 +13,31 @@
     выбрать из списка, а не вводить ФИО вручную.
 </p>
 
+<?php
+// ДОБАВЛЕНО (23.11.2026, раунд 208, по прямому указанию пользователя --
+// "сделай на всех страницах где есть фильтрация тоже самое" -- та же
+// сворачиваемая в Bootstrap collapse панель фильтров, что и на /flights
+// (round207), перенесена на все экраны со списком и фильтрами.
+// $hasActiveFilters считается универсально по $_GET (без привязки к
+// конкретным полям фильтра этой страницы, кроме служебного 'page') --
+// один и тот же приём работает одинаково на каждом экране и не требует
+// правок в контроллере.
+$__activeFilterParamshandlersFilterPanel = array_filter(
+    array_diff_key($_GET, ['page' => null]),
+    fn($v) => $v !== '' && $v !== null
+);
+$hasActiveFiltershandlersFilterPanel = count($__activeFilterParamshandlersFilterPanel) > 0;
+?>
+<div class="mb-2">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse"
+            data-bs-target="#handlersFilterPanel" aria-expanded="<?= $hasActiveFiltershandlersFilterPanel ? 'true' : 'false' ?>" aria-controls="handlersFilterPanel">
+        <i class="bi bi-funnel"></i> Фильтры
+        <?php if ($hasActiveFiltershandlersFilterPanel): ?>
+        <span class="badge rounded-pill bg-primary ms-1"><?= count($__activeFilterParamshandlersFilterPanel) ?></span>
+        <?php endif; ?>
+    </button>
+</div>
+<div class="collapse<?= $hasActiveFiltershandlersFilterPanel ? ' show' : '' ?>" id="handlersFilterPanel">
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end">
@@ -33,6 +58,7 @@
             </div>
         </form>
     </div>
+</div>
 </div>
 
 <div class="card border-0 shadow-sm">
