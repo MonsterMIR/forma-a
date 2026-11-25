@@ -53,6 +53,17 @@ class AirportController extends Controller
     public function create(array $params = []): void
     {
         $this->requireRole(['admin', 'cok']);
+
+        // ДОБАВЛЕНО (25.11.2026, раунд 209) -- см. докблок
+        // Airport::findConflicting(): после отказа store() (например,
+        // дубль IATA/ICAO кода) форма раньше просто очищалась -- ЦОК
+        // пришлось бы вводить всё заново. Та же схема, что и в
+        // FlightController::create() (round165).
+        $old = View::getOldInput();
+        if (!empty($old)) {
+            $_POST = $old;
+        }
+
         $this->render('airports/create', ['title' => 'Create Airport']);
     }
 
@@ -87,7 +98,33 @@ class AirportController extends Controller
             'is_active' => isset($data['is_active']) ? (int)$data['is_active'] : 1,
         ];
 
-        $id = (int)$this->airportModel->insert($insertData);
+        // ДОБАВЛЕНО (25.11.2026, раунд 209, по жалобе пользователя на
+        // 500-ю ошибку) -- см. докблок Airport::findConflicting(). IATA/
+        // ICAO код уже занят другим аэропортом -- понятная ошибка вместо
+        // необработанного PDOException/500 при попытке insert().
+        $conflict = $this->airportModel->findConflicting($insertData['iata_code'], $insertData['icao_code']);
+        if ($conflict) {
+            $codeLabel = $insertData['iata_code'] && $conflict['iata_code'] === $insertData['iata_code']
+                ? "IATA-кодом «{$insertData['iata_code']}»"
+                : "ICAO-кодом «{$insertData['icao_code']}»";
+            View::setOldInput($data);
+            View::setFlash('error', "Аэропорт с таким {$codeLabel} уже есть в справочнике: "
+                . "«{$conflict['name']}» (ID {$conflict['id']}). Проверьте, не дубль ли это, "
+                . "или исправьте код.");
+            $this->redirect('/airports/create');
+            return;
+        }
+
+        try {
+            $id = (int)$this->airportModel->insert($insertData);
+        } catch (\PDOException $e) {
+            // Последняя линия защиты (гонка двух одновременных заявок на
+            // один и тот же код) -- проверка выше ловит обычный случай.
+            View::setOldInput($data);
+            View::setFlash('error', 'Не удалось сохранить: такой IATA/ICAO код уже используется другим аэропортом.');
+            $this->redirect('/airports/create');
+            return;
+        }
 
         ActivityLogger::log('airport', $id, 'create_airport', 'success',
             "Created airport '{$insertData['name']}'", null, $insertData);
@@ -105,6 +142,16 @@ class AirportController extends Controller
             $this->redirect('/airports');
             return;
         }
+
+        // ДОБАВЛЕНО (25.11.2026, раунд 209) -- см. комментарий в create()
+        // выше. edit.php читает значения из $airport, а не из $_POST --
+        // поэтому здесь накладываем старый ввод поверх загруженной записи,
+        // а не подменяем $_POST.
+        $old = View::getOldInput();
+        if (!empty($old)) {
+            $airport = array_merge($airport, $old);
+        }
+
         $this->render('airports/edit', ['title' => 'Edit Airport', 'airport' => $airport]);
     }
 
@@ -144,7 +191,32 @@ class AirportController extends Controller
             'is_active' => (int)($data['is_active'] ?? 1),
         ];
 
-        $this->airportModel->update((int)$params['id'], $updateData);
+        // ДОБАВЛЕНО (25.11.2026, раунд 209) -- см. комментарий в store()
+        // выше. excludeId=$params['id'], чтобы запись не конфликтовала
+        // сама с собой, когда код не менялся.
+        $conflict = $this->airportModel->findConflicting(
+            $updateData['iata_code'], $updateData['icao_code'], (int)$params['id']
+        );
+        if ($conflict) {
+            $codeLabel = $updateData['iata_code'] && $conflict['iata_code'] === $updateData['iata_code']
+                ? "IATA-кодом «{$updateData['iata_code']}»"
+                : "ICAO-кодом «{$updateData['icao_code']}»";
+            View::setOldInput($data);
+            View::setFlash('error', "Аэропорт с таким {$codeLabel} уже есть в справочнике: "
+                . "«{$conflict['name']}» (ID {$conflict['id']}). Проверьте, не дубль ли это, "
+                . "или исправьте код.");
+            $this->redirect('/airports/' . $params['id'] . '/edit');
+            return;
+        }
+
+        try {
+            $this->airportModel->update((int)$params['id'], $updateData);
+        } catch (\PDOException $e) {
+            View::setOldInput($data);
+            View::setFlash('error', 'Не удалось сохранить: такой IATA/ICAO код уже используется другим аэропортом.');
+            $this->redirect('/airports/' . $params['id'] . '/edit');
+            return;
+        }
 
         ActivityLogger::log('airport', (int)$params['id'], 'update_airport', 'success',
             "Updated airport '{$updateData['name']}'", $airport, $updateData);

@@ -85,4 +85,46 @@ class Airport extends Model
         $row = $stmt->fetch();
         return $row ?: null;
     }
+
+    /**
+     * ДОБАВЛЕНО (25.11.2026, раунд 209, по жалобе пользователя на 500-ю
+     * ошибку при попытке ЦОК отредактировать/дополнить справочник
+     * аэропортов): iata_code/icao_code в таблице `airports` -- UNIQUE
+     * (uq_airports_iata/uq_airports_icao), а AirportController::store()/
+     * update() раньше никак не проверяли совпадение заранее -- просто
+     * пытались сохранить, и при дубле MySQL бросал PDOException
+     * (Duplicate entry...), который ничем не был пойман -- 500 вместо
+     * понятного сообщения. Права на редактирование у ЦОК были и раньше
+     * (round136, Permissions::$matrix['airports.manage']) -- проблема
+     * была именно в необработанном исключении, а не в доступе. Ищет
+     * СУЩЕСТВУЮЩИЙ аэропорт с тем же IATA или ICAO кодом (кроме самого
+     * себя при редактировании, $excludeId) -- используется ДО
+     * insert()/update(), чтобы отдать понятную ошибку вместо падения.
+     */
+    public function findConflicting(?string $iataCode, ?string $icaoCode, ?int $excludeId = null): ?array
+    {
+        if (empty($iataCode) && empty($icaoCode)) {
+            return null;
+        }
+
+        $where  = [];
+        $params = [];
+        if (!empty($iataCode)) {
+            $where[]  = 'iata_code = ?';
+            $params[] = $iataCode;
+        }
+        if (!empty($icaoCode)) {
+            $where[]  = 'icao_code = ?';
+            $params[] = $icaoCode;
+        }
+        $sql = 'SELECT * FROM `airports` WHERE (' . implode(' OR ', $where) . ')';
+        if ($excludeId !== null) {
+            $sql .= ' AND id != ?';
+            $params[] = $excludeId;
+        }
+        $sql .= ' LIMIT 1';
+
+        $row = $this->query($sql, $params)->fetch();
+        return $row ?: null;
+    }
 }
