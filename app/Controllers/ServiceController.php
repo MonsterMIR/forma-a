@@ -188,11 +188,17 @@ class ServiceController extends Controller
         }
         $categories = $this->catModel->getAllActive();
         $currencies = $this->currencyModel->getAllActive();
+
+        // ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl().
+        $returnUrl = $this->captureListReturnUrl('/services');
+
         $this->render('services/edit', [
             'title'      => 'Edit Service',
             'service'    => $service,
             'categories' => $categories,
             'currencies' => $currencies,
+            'returnUrl'  => $returnUrl,
         ]);
     }
 
@@ -293,6 +299,9 @@ class ServiceController extends Controller
             "Updated service '{$updateData['name']}'", $service, $updateData);
 
         View::setFlash('success', 'Service updated successfully.');
-        $this->redirect('/services');
+        // ИЗМЕНЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl()/sanitizeReturnUrl().
+        $returnUrl = $this->sanitizeReturnUrl($data['_return_url'] ?? null, '/services');
+        $this->redirect($returnUrl ?? '/services');
     }
 }

@@ -141,11 +141,17 @@ class TariffController extends Controller
         }
         $services   = $this->serviceModel->getAllActive();
         $currencies = $this->currencyModel->getAllActive();
+
+        // ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl().
+        $returnUrl = $this->captureListReturnUrl('/tariffs');
+
         $this->render('tariffs/edit', [
             'title'      => 'Edit Tariff',
             'tariff'     => $tariff,
             'services'   => $services,
             'currencies' => $currencies,
+            'returnUrl'  => $returnUrl,
         ]);
     }
 
@@ -187,6 +193,9 @@ class TariffController extends Controller
         }
 
         View::setFlash('success', 'Tariff updated successfully.');
-        $this->redirect('/tariffs');
+        // ИЗМЕНЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl()/sanitizeReturnUrl().
+        $returnUrl = $this->sanitizeReturnUrl($data['_return_url'] ?? null, '/tariffs');
+        $this->redirect($returnUrl ?? '/tariffs');
     }
 }

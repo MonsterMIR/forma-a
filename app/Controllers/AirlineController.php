@@ -126,7 +126,15 @@ class AirlineController extends Controller
             $this->redirect('/airlines');
             return;
         }
-        $this->render('airlines/edit', ['title' => 'Edit Airline', 'airline' => $airline]);
+        // ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl().
+        $returnUrl = $this->captureListReturnUrl('/airlines');
+
+        $this->render('airlines/edit', [
+            'title'     => 'Edit Airline',
+            'airline'   => $airline,
+            'returnUrl' => $returnUrl,
+        ]);
     }
 
     public function update(array $params = []): void
@@ -172,6 +180,9 @@ class AirlineController extends Controller
             "Updated airline '{$updateData['name']}'", $airline, $updateData);
 
         View::setFlash('success', 'Airline updated successfully.');
-        $this->redirect('/airlines');
+        // ИЗМЕНЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl()/sanitizeReturnUrl().
+        $returnUrl = $this->sanitizeReturnUrl($data['_return_url'] ?? null, '/airlines');
+        $this->redirect($returnUrl ?? '/airlines');
     }
 }

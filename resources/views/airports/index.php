@@ -53,6 +53,16 @@ $hasActiveFiltersairportsFilterPanel = count($__activeFilterParamsairportsFilter
 </div>
 </div>
 
+<?php if ($pagination['last_page'] > 1): ?>
+<div class="mb-2">
+    <?php /* ДОБАВЛЕНО (25.11.2026, раунд 211, по прямому указанию
+             пользователя -- "разбивку на страницу, которая внизу,
+             продублирую её и сверху таблицы тоже"): та же пагинация
+             (layouts/_pagination.php), что и внизу карточки -- просто
+             повторно включена сверху, над таблицей. */ ?>
+    <?php include BASE_PATH . '/resources/views/layouts/_pagination.php'; ?>
+</div>
+<?php endif; ?>
 <div class="card border-0 shadow-sm">
     <div class="card-body p-0">
         <div class="table-responsive">

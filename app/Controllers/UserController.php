@@ -132,11 +132,17 @@ class UserController extends Controller
         $roles = $this->roleModel->getAllRoles();
         $handlers = [];
         try { $handlers = (new \App\Models\Handler())->getAllActive(); } catch (\Throwable $e) {}
+
+        // ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl().
+        $returnUrl = $this->captureListReturnUrl('/users');
+
         $this->render('users/edit', [
-            'title'    => 'Edit User',
-            'user'     => $user,
-            'roles'    => $roles,
-            'handlers' => $handlers,
+            'title'     => 'Edit User',
+            'user'      => $user,
+            'roles'     => $roles,
+            'handlers'  => $handlers,
+            'returnUrl' => $returnUrl,
         ]);
     }
 
@@ -177,7 +183,10 @@ class UserController extends Controller
         }
 
         View::setFlash('success', 'User updated successfully.');
-        $this->redirect('/users');
+        // ИЗМЕНЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl()/sanitizeReturnUrl().
+        $returnUrl = $this->sanitizeReturnUrl($data['_return_url'] ?? null, '/users');
+        $this->redirect($returnUrl ?? '/users');
     }
 
     public function toggleActive(array $params = []): void

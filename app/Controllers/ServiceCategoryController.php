@@ -108,7 +108,15 @@ class ServiceCategoryController extends Controller
             $this->redirect('/service-categories');
             return;
         }
-        $this->render('service_categories/edit', ['title' => 'Edit Category', 'category' => $cat]);
+        // ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl().
+        $returnUrl = $this->captureListReturnUrl('/service-categories');
+
+        $this->render('service_categories/edit', [
+            'title'     => 'Edit Category',
+            'category'  => $cat,
+            'returnUrl' => $returnUrl,
+        ]);
     }
 
     public function update(array $params = []): void
@@ -158,6 +166,9 @@ class ServiceCategoryController extends Controller
             "Updated category '{$updateData['name']}'", $cat, $updateData);
 
         View::setFlash('success', 'Service category updated successfully.');
-        $this->redirect('/service-categories');
+        // ИЗМЕНЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl()/sanitizeReturnUrl().
+        $returnUrl = $this->sanitizeReturnUrl($data['_return_url'] ?? null, '/service-categories');
+        $this->redirect($returnUrl ?? '/service-categories');
     }
 }

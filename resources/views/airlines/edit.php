@@ -7,6 +7,12 @@
     <div class="card-body">
         <form method="POST" action="/airlines/<?= (int)$airline['id'] ?>/edit">
             <?= csrf_field() ?>
+            <?php /* ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+                     Controller::captureListReturnUrl(): переносим через
+                     форму URL страницы списка (номер страницы + фильтры),
+                     с которой сюда перешли, чтобы update() мог вернуть
+                     именно туда. */ ?>
+            <input type="hidden" name="_return_url" value="<?= e($returnUrl ?? '') ?>">
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label fw-semibold"><?= __('COMMON_NAME') ?> <span class="text-danger">*</span></label>

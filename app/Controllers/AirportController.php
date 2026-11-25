@@ -152,7 +152,15 @@ class AirportController extends Controller
             $airport = array_merge($airport, $old);
         }
 
-        $this->render('airports/edit', ['title' => 'Edit Airport', 'airport' => $airport]);
+        // ДОБАВЛЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl().
+        $returnUrl = $this->captureListReturnUrl('/airports');
+
+        $this->render('airports/edit', [
+            'title'     => 'Edit Airport',
+            'airport'   => $airport,
+            'returnUrl' => $returnUrl,
+        ]);
     }
 
     public function update(array $params = []): void
@@ -222,6 +230,11 @@ class AirportController extends Controller
             "Updated airport '{$updateData['name']}'", $airport, $updateData);
 
         View::setFlash('success', 'Airport updated successfully.');
-        $this->redirect('/airports');
+        // ИЗМЕНЕНО (25.11.2026, раунд 211) -- см. докблок
+        // Controller::captureListReturnUrl()/sanitizeReturnUrl(): возвращаем
+        // на страницу списка, с которой редактирование начиналось (номер
+        // страницы + фильтры), а не всегда на первую.
+        $returnUrl = $this->sanitizeReturnUrl($data['_return_url'] ?? null, '/airports');
+        $this->redirect($returnUrl ?? '/airports');
     }
 }
