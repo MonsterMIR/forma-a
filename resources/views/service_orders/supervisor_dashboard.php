@@ -128,6 +128,17 @@
                     <div class="text-muted small mb-1">
                         <i class="bi bi-upc-scan me-1"></i>Борт:
                         <?= !empty($f['aircraft_registration']) ? '<span class="fw-semibold text-dark">' . e($f['aircraft_registration']) . '</span>' : '<span class="fst-italic">не указан</span>' ?>
+                        <?php /* ДОБАВЛЕНО (25.11.2026, раунд 210, по прямому указанию
+                                 пользователя со скриншотом дашборда супервайзера --
+                                 "отобрази еще и тип воздушного судна... после
+                                 регистрационного номера"): flights.aircraft_type уже
+                                 приходит через f.* (без доп. запроса/JOIN, как и
+                                 aircraft_mtow выше, раунд 125) -- 355 из 357 рейсов
+                                 это поле заполнено. Сразу после борта, перед
+                                 хендлером (как пользователь и предложил), хендлер
+                                 просто немного сдвигается правее/ниже. */ ?>
+                        &nbsp;·&nbsp;Тип:
+                        <?= !empty($f['aircraft_type']) ? '<span class="fw-semibold text-dark">' . e($f['aircraft_type']) . '</span>' : '<span class="fst-italic">не указан</span>' ?>
                         &nbsp;·&nbsp;Хендлер:
                         <?= !empty($f['handler_name']) ? '<span class="fw-semibold text-dark">' . e($f['handler_name']) . '</span>' : '<span class="fst-italic">не указан</span>' ?>
                     </div>
