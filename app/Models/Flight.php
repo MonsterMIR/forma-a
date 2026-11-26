@@ -589,7 +589,36 @@ class Flight extends Model
     ): ?array {
         $refTime = ($scheduledTime !== null && $scheduledTime !== '') ? $scheduledTime : '12:00:00';
 
-        $sql = "SELECT id, flight_number, flight_date, scheduled_time, operation_type
+        // ИЗМЕНЕНО (26.11.2026, раунд 212, по жалобе пользователя --
+        // расследование T7BIG/CAA UZB 308/11/2026: Нигматулина не смогла
+        // создать легитимный прилёт, т.к. эта функция (round206)
+        // ошибочно выбрала предыдущим рейсом ПРИЛЁТ #411 вместо его же
+        // ПАРНОГО вылета #412 -- хотя тот же борт в тот же день улетел
+        // ПОСЛЕ того как прилетел, scheduled_time у вылета (11:40) оказался
+        // на 5 минут МЕНЬШЕ, чем у прилёта (11:45), из-за неточного ручного
+        // ввода времени -- чисто по часам выходило, что "прилёт позже", и
+        // сортировка по времени брала его как "последний", хотя по смыслу
+        // последним событием визита всегда является ИМЕННО вылет (борт не
+        // может улететь раньше, чем прилетел).
+        //
+        // Раньше брали строго топ-1 по ORDER BY. Теперь берём топ-2 и, если
+        // они оказались ПАРОЙ одного визита (top.linked_flight_id ==
+        // second.id), порядок операций "перепутан" (top -- прилёт, second
+        // -- вылет), И разрыв между ними МАЛЕНЬКИЙ (<=3 часов) -- возвращаем
+        // именно вылет: при небольшом разрыве типичная причина -- неточный
+        // ручной ввод времени одного и того же короткого визита (как у
+        // T7BIG), и вылет парного рейса не может быть раньше своего
+        // прилёта по смыслу. Порог в 3 часа — намеренно: при ПРОВЕРКЕ на
+        // всех реальных рейсах системы нашёлся ещё один случай с разницей
+        // ~9ч50м (борт RA67165/RSJ7165, рейсы #40/#41) -- это НЕ опечатка
+        // во времени, а уже известная (round115/135), ещё не исправленная
+        // пользователем перекрёстная связка (linked_flight_id сам неверный,
+        // см. claude/analysis-2026-10-22-round115-...). Трогать её здесь
+        // нельзя — там нужна отдельная перелинковка, а не подмена "кто
+        // последний", иначе эта функция тихо замаскирует отдельную,
+        // явно не решённую проблему вместо настоящего бага T7BIG. Порог
+        // отсекает такие большие разрывы: при них поведение НЕ меняется.
+        $sql = "SELECT id, flight_number, flight_date, scheduled_time, operation_type, linked_flight_id
                 FROM `flights`
                 WHERE aircraft_registration = ?
                   AND status != 'cancelled'
@@ -601,10 +630,29 @@ class Flight extends Model
             $params[] = $excludeId;
         }
 
-        $sql .= " ORDER BY flight_date DESC, COALESCE(scheduled_time, '12:00:00') DESC, id DESC LIMIT 1";
+        $sql .= " ORDER BY flight_date DESC, COALESCE(scheduled_time, '12:00:00') DESC, id DESC LIMIT 2";
 
-        $row = $this->query($sql, $params)->fetch();
-        return $row ?: null;
+        $rows = $this->query($sql, $params)->fetchAll();
+        if (empty($rows)) {
+            return null;
+        }
+
+        $top = $rows[0];
+        if (
+            isset($rows[1])
+            && !empty($top['linked_flight_id'])
+            && (int)$top['linked_flight_id'] === (int)$rows[1]['id']
+            && $top['operation_type'] === 'arrival'
+            && $rows[1]['operation_type'] === 'departure'
+        ) {
+            $topTs    = strtotime($top['flight_date']     . ' ' . ($top['scheduled_time']     ?? '12:00:00'));
+            $secondTs = strtotime($rows[1]['flight_date']  . ' ' . ($rows[1]['scheduled_time']  ?? '12:00:00'));
+            if ($topTs !== false && $secondTs !== false && abs($topTs - $secondTs) <= 3 * 3600) {
+                return $rows[1];
+            }
+        }
+
+        return $top;
     }
 
     /**
